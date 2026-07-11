@@ -176,7 +176,8 @@ function paintGround() {
   const timber = S.hold.rich.timber; // 0..1
   const onBuild = (tx, ty) => tx < 0 || ty < 0 || tx >= TOWN_W || ty >= TOWN_H || near.has(`${Math.floor(tx / PLOT)},${Math.floor(ty / PLOT)}`);
   const nearTown = (tx, ty) => Math.abs(tx - TOWN_W / 2) < 26 && Math.abs(ty - TOWN_H / 2) < 22;
-  const regWood = (tx, ty) => { if (nearTown(tx, ty)) S.woodNodes.push({ x: tx * TILE + TILE / 2, y: ty * TILE + TILE }); };
+  // A wood node remembers its tree sprites so a woodcutter can fell them.
+  const regWood = (tx, ty, sprites) => { if (nearTown(tx, ty)) S.woodNodes.push({ x: tx * TILE + TILE / 2, y: ty * TILE + TILE, sprites }); };
   const tree = (tx, ty, rec) => placeTree(tx * TILE + TILE / 2, ty * TILE + TILE, rec);
   const tall = () => treePool[(r() * 3) | 0];          // weighted 2-tile stacks
   const small = () => treePool[3 + ((r() * 2) | 0)];   // single tree or bush
@@ -190,27 +191,32 @@ function paintGround() {
     const gx = 2 + Math.floor(r() * (TOWN_W - 4));
     const gy = 2 + Math.floor(r() * (TOWN_H - 4));
     const rad = 3 + r() * (3 + timber * 3);
-    if (r() < 0.6 && !clusterFits(gx, gy)) { placeCluster(gx, gy, clusterRows); regWood(gx, gy); }
+    if (r() < 0.6 && !clusterFits(gx, gy)) { const cs = placeCluster(gx, gy, clusterRows); regWood(gx, gy, cs); }
     const ir = Math.ceil(rad);
     for (let dy = -ir; dy <= ir; dy++) for (let dx = -ir; dx <= ir; dx++) {
       const tx = gx + dx, ty = gy + dy;
       if (onBuild(tx, ty)) continue;
       const dist = Math.hypot(dx, dy);
       if (dist > rad) continue;
-      if (r() < (1 - dist / rad) ** 2 * 0.8) { tree(tx, ty, dist < rad * 0.55 ? tall() : small()); regWood(tx, ty); }
+      if (r() < (1 - dist / rad) ** 2 * 0.8) { const ts = tree(tx, ty, dist < rad * 0.55 ? tall() : small()); regWood(tx, ty, ts); }
     }
   }
   // a few lone trees/bushes in the open country between groves
   for (let ty = 0; ty < TOWN_H; ty++) for (let tx = 0; tx < TOWN_W; tx++) {
     if (onBuild(tx, ty)) continue;
-    if (r() < 0.008 + timber * 0.012) { tree(tx, ty, r() < 0.5 ? small() : tall()); regWood(tx, ty); }
+    if (r() < 0.008 + timber * 0.012) { const ts = tree(tx, ty, r() < 0.5 ? small() : tall()); regWood(tx, ty, ts); }
   }
+  // Remember the forest's near-town size + palette so felled trees can regrow.
+  S.woodCap = S.woodNodes.length;
+  S.treePool = treePool;
+  scheduleRegrow();
 }
 
 // placeCluster lays a full 3x3 forest mass (base-anchored, y-sorted as one)
 // centered on column gx with its bottom row at gy.
 function placeCluster(gx, gy, rows) {
   const baseZ = (gy + 1) * TILE;
+  const sprites = [];
   for (let rr = 0; rr < 3; rr++) {                 // 0 tops, 1 mids, 2 bottoms
     const tileY = gy - 2 + rr;
     for (let cc = 0; cc < 3; cc++) {
@@ -219,22 +225,26 @@ function placeCluster(gx, gy, rows) {
       s.x = (gx - 1 + cc) * TILE + TILE / 2;
       s.y = (tileY + 1) * TILE;
       s.zIndex = baseZ;
-      entities.addChild(s);
+      entities.addChild(s); sprites.push(s);
     }
   }
+  return sprites;
 }
 
 // placeTree stacks a tree's canopy over its trunk, both anchored at the
 // base so the whole tree y-sorts as one against villagers and buildings.
+// Returns the sprites so a wood node can fell (remove) them when chopped.
 function placeTree(cx, baseY, rec) {
+  const sprites = [];
   const b = new Sprite(S.atlas.tex(rec.b));
   b.anchor.set(0.5, 1); b.x = cx; b.y = baseY; b.zIndex = baseY;
-  entities.addChild(b);
+  entities.addChild(b); sprites.push(b);
   if (rec.t != null) {
     const t = new Sprite(S.atlas.tex(rec.t));
     t.anchor.set(0.5, 1); t.x = cx; t.y = baseY - TILE; t.zIndex = baseY;
-    entities.addChild(t);
+    entities.addChild(t); sprites.push(t);
   }
+  return sprites;
 }
 
 // ---- buildings ------------------------------------------------------
@@ -528,10 +538,92 @@ function workEffect(node) {
   }
 }
 
+// nearestSawmill returns the pixel centre of the closest sawmill, or null.
+function nearestSawmill(px, py) {
+  let best = null, bd = Infinity;
+  for (const h of S.hittable) {
+    if (h.type !== 'sawmill') continue;
+    const cx = ((h.x0 + h.x1) / 2) * TILE, cy = ((h.y0 + h.y1) / 2) * TILE;
+    const d = (cx - px) ** 2 + (cy - py) ** 2;
+    if (d < bd) { bd = d; best = { x: cx, y: cy }; }
+  }
+  return best;
+}
+
+// fellTree clears a felled wood node: destroy its tree sprites, drop it from
+// the node list, and throw a burst of wood-chips. Guarded against double-fell.
+function fellTree(node) {
+  if (!node || node.felled) return;
+  node.felled = true;
+  for (const s of (node.sprites || [])) { entities.removeChild(s); s.destroy(); }
+  const i = S.woodNodes.indexOf(node);
+  if (i >= 0) S.woodNodes.splice(i, 1);
+  chipBurst(node.x, node.y);
+}
+
+function chipBurst(x, y) {
+  for (let i = 0; i < 6; i++) {
+    const p = new Graphics().rect(-1, -1, 2, 2).fill(0x8a5a2b);
+    p.x = x + (Math.random() - 0.5) * 10; p.y = y - 6 - Math.random() * 4; p.zIndex = 1e7;
+    entities.addChild(p);
+    const vx = (Math.random() - 0.5) * 20, vy = -12 - Math.random() * 9, t0 = performance.now();
+    const tick = () => {
+      const k = (performance.now() - t0) / 540;
+      if (k >= 1) { entities.removeChild(p); p.destroy(); return; }
+      p.x += vx * 0.016; p.y += vy * 0.016 + k * 4; p.alpha = 1 - k;
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }
+}
+
+// startHaul gives a woodcutter a log to carry back to the nearest sawmill.
+function startHaul(v) {
+  const log = new Sprite(S.atlas.tex(106)); // Kenney log tile
+  log.anchor.set(0.5, 1); log.scale.set(0.7); log.x = 3; log.y = -19;
+  v.addChild(log); v.logSprite = log; v.hauling = true;
+  const mill = nearestSawmill(v.x, v.y);
+  const t = mill || randomTownPoint();
+  v.tx = t.x; v.ty = t.y; v.targetNode = null; v.headingHome = false; v.moving = true;
+}
+
+function deliverLog(v) {
+  if (v.logSprite) { v.removeChild(v.logSprite); v.logSprite.destroy(); v.logSprite = null; }
+  v.hauling = false;
+}
+
+// The forest recovers: every so often a fresh sapling (and its wood node)
+// grows back on open near-town ground, up to the original forest size.
+function regrowOne() {
+  if (!S.treePool || S.woodNodes.length >= (S.woodCap || 0)) return;
+  for (let t = 0; t < 12; t++) {
+    const tx = Math.floor(TOWN_W / 2 + (Math.random() - 0.5) * 46);
+    const ty = Math.floor(TOWN_H / 2 + (Math.random() - 0.5) * 38);
+    if (tx < 1 || ty < 1 || tx >= TOWN_W - 1 || ty >= TOWN_H - 1) continue;
+    if (S.usedPlots.has(`${Math.floor(tx / PLOT)},${Math.floor(ty / PLOT)}`)) continue;
+    const px = tx * TILE + TILE / 2, py = ty * TILE + TILE;
+    if (S.woodNodes.some((n) => Math.abs(n.x - px) < TILE * 2 && Math.abs(n.y - py) < TILE * 2)) continue;
+    const rec = S.treePool[(Math.random() * S.treePool.length) | 0];
+    const sprites = placeTree(px, py, rec);
+    for (const s of sprites) s.alpha = 0;
+    const t0 = performance.now();
+    const grow = () => { const k = Math.min(1, (performance.now() - t0) / 500); for (const s of sprites) s.alpha = k; if (k < 1) requestAnimationFrame(grow); };
+    requestAnimationFrame(grow);
+    S.woodNodes.push({ x: px, y: py, sprites });
+    return;
+  }
+}
+function scheduleRegrow() {
+  setTimeout(() => { regrowOne(); scheduleRegrow(); }, 9000 + Math.random() * 6000);
+}
+
 function stepVillager(v, dt) {
   if (!v.moving) {
     v.idle -= dt;
-    if (v.idle <= 0) pickTarget(v);
+    if (v.idle <= 0) {
+      if (v.chopping) { v.chopping = false; fellTree(v.chopNode); v.chopNode = null; startHaul(v); return; }
+      pickTarget(v);
+    }
     return;
   }
   if (!v.anim.playing) v.anim.play();
@@ -541,10 +633,15 @@ function stepVillager(v, dt) {
   const speed = (v.role === 'soldier' && isRaided() ? 34 : worker ? 24 : 18) * dt;
   if (dist < speed) {
     v.x = v.tx; v.y = v.ty; v.moving = false; v.anim.gotoAndStop(0); v.zIndex = v.y;
-    if (v.targetNode) {                 // reached a work node — toil a while, sparks flying
+    if (v.targetNode && v.role === 'woodcutter') {  // reached a tree — chop it down, then haul
+      v.chopping = true; v.chopNode = v.targetNode; v.targetNode = null;
+      v.idle = 2.5 + Math.random() * 2;
+      workEffect(v.chopNode);
+    } else if (v.targetNode) {          // miner at an ore vein — toil a while, sparks flying
       v.headingHome = true; v.idle = 3 + Math.random() * 3;
       workEffect(v.targetNode); v.targetNode = null;
-    } else {
+    } else {                           // arrived home / at the mill
+      if (v.hauling) deliverLog(v);
       v.idle = 0.8 + Math.random() * 2.5;
     }
     return;
