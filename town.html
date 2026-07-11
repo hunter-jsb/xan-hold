@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Steward of a Hold · Xan</title>
+  <link rel="stylesheet" href="/town.css">
+  <!-- Pixi is vendored locally (no CDN) and resolved via an import map. -->
+  <script type="importmap">
+  { "imports": { "pixi.js": "/vendor/pixi.min.mjs" } }
+  </script>
+</head>
+<body>
+  <div id="stage"></div>
+
+  <!-- HUD overlays the canvas -->
+  <div id="hud">
+    <div id="topstrip">
+      <div id="holdtitle"><b id="hname">—</b><span id="hsub" class="dim"></span></div>
+      <div id="resstrip"></div>
+    </div>
+    <div id="region-tr" class="region"></div>
+    <div id="region-br" class="region"></div>
+    <div id="chroniclebox">
+      <div id="chronicle"></div>
+      <div id="stewardline" class="dim"></div>
+    </div>
+    <div id="hint" class="dim">scroll <b>zoom</b> · drag / <b>WASD</b> pan · <b>P</b> Steward · <b>H</b> hide UI · <b>M</b> map · <b>R</b> reset</div>
+  </div>
+
+  <div id="btip"></div>
+  <div id="restip"></div>
+  <div id="stewardask">
+    <label>Instruct the Steward <span class="dim">— or press Enter for a free hand · Esc to cancel</span></label>
+    <input id="stewardinput" type="text" maxlength="200" autocomplete="off"
+           placeholder="e.g. throw up walls and stockpile food before winter">
+  </div>
+
+  <!-- The deterministic core (classic scripts → window.XAN / window.XANGAME), loaded before the module. -->
+  <script src="/data/world.js"></script>
+  <script src="/js/world.js"></script>
+  <script src="/js/game.js"></script>
+  <script type="module" src="/js/town/town.js"></script>
+</body>
+</html>

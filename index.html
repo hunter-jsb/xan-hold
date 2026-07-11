@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Steward of a Hold · Xan</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header id="topbar">
+    <div class="brand">⛰ <b>Steward of a Hold</b> <span class="dim">— a hold-builder in the world of Xan</span></div>
+    <div class="right"><span id="worldMeta" class="dim"></span> <button id="toMap" class="ghost">the map</button></div>
+  </header>
+
+  <!-- Founding screen: pick a generated seat -->
+  <main id="founding">
+    <section class="mapwrap"><canvas id="map"></canvas>
+      <div class="maphint dim">Each dot is a seat the world-sim generated. Hover to read it; click to inspect; found your hold.</div>
+    </section>
+    <aside class="side">
+      <div id="dossier" class="dossier"><div class="dim empty">Pick a seat on the map to read its dossier.</div></div>
+      <div id="roster" class="roster"></div>
+    </aside>
+  </main>
+
+  <!-- Hold screen: the idle game -->
+  <main id="hold" style="display:none">
+    <header class="holdhead">
+      <div><h1 id="holdName"></h1><div id="holdSub" class="dim"></div></div>
+      <div id="people" class="people"></div>
+    </header>
+    <div id="resbar" class="resbar"></div>
+    <section class="cols">
+      <div class="panel">
+        <h2>Works of the Hold</h2>
+        <div id="buildings" class="buildings"></div>
+      </div>
+      <div class="rcol">
+        <div class="panel market" id="marketPanel">
+          <h2>Market</h2>
+          <div id="market"></div>
+        </div>
+        <div class="panel logpanel">
+          <h2>Chronicle</h2>
+          <div id="log" class="log"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div id="away" class="away"></div>
+
+  <script src="data/world.js"></script>
+  <script src="js/world.js"></script>
+  <script src="js/map.js"></script>
+  <script src="js/game.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

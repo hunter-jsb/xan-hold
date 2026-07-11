@@ -1,0 +1,16 @@
+{
+  "name": "xan-hold",
+  "version": "1.0.0",
+  "description": "A tiny **idle town-builder** set in the world of [`xan-world-sim`](../xan-world-sim). You pick one of the seats the world-sim generated, and idle it from a lonely hall into a thriving hold — its geography *is* its economy.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "pixi.js": "^8.19.0"
+  }
+}

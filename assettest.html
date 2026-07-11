@@ -1,0 +1,34 @@
+<!DOCTYPE html><html><head><meta charset="utf8"><title>building test</title>
+<style>html,body{margin:0;background:#3f6b3a}canvas{image-rendering:pixelated;display:block}</style>
+</head><body>
+<canvas id="c" width="980" height="320"></canvas>
+<script>
+const TILE=16, COLS=12, S=4;
+const c=document.getElementById('c'), x=c.getContext('2d'); x.imageSmoothingEnabled=false;
+const atlas=new Image();
+function blit(idx,gx,gy){const cx=(idx%COLS)*TILE, cy=((idx/COLS)|0)*TILE; x.drawImage(atlas,cx,cy,TILE,TILE,gx*TILE*S,gy*TILE*S,TILE*S,TILE*S);}
+function lbl(t,gx,gy){x.fillStyle="#fff";x.font="13px monospace";x.fillText(t,gx*TILE*S,gy*TILE*S);}
+function house(rows,gx,gy){ rows.forEach((row,ry)=>row.forEach((i,rx)=>blit(i,gx+rx,gy+ry))); }
+// prop at the doorstep: scaled, centered under the house, sitting in front
+function doorstep(idx,gx,w,baseGy){
+  const sc=0.82, pw=TILE*S*sc;
+  const px=(gx+w/2)*TILE*S - pw/2;
+  const py=(baseGy+1)*TILE*S - pw + 5;
+  const sx=(idx%COLS)*TILE, sy=((idx/COLS)|0)*TILE;
+  x.drawImage(atlas,sx,sy,TILE,TILE, px,py, pw,pw);
+}
+const R=[[55],[85]], G=[[51],[78]], W=[[52,54],[84,86]];
+function draw(){
+  // sawmill, mine, wharf, granary (1-wide + doorstep tool)
+  house(R,1,1); doorstep(106,1,1,2); lbl("sawmill",1,4.3);
+  house(G,3,1); doorstep(115,3,1,2); lbl("mine",3,4.3);
+  house(G,5,1); doorstep(131,5,1,2); lbl("wharf",5,4.3);
+  house(R,7,1); doorstep(130,7,1,2); lbl("granary",7,4.3);
+  // saltern (2-wide) + doorstep, farm, market
+  house(W,9,1); doorstep(130,9,2,2); lbl("saltern",9,4.3);
+  blit(25,12,1);blit(25,13,1);blit(25,12,2);blit(116,13,2); lbl("farm",12,4.3);
+  blit(57,15,2); lbl("market",15,3.4);
+  document.title="ok";
+}
+atlas.onload=()=>draw(); atlas.src='/assets/tiles/tiny-town_atlas_packed.png';
+</script></body></html>
