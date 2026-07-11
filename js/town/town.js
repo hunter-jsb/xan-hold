@@ -6,7 +6,7 @@
 // in-world chronicle. Nothing here writes back to the sim.
 import { Application, Container, Sprite, AnimatedSprite, Texture, Graphics } from 'pixi.js';
 import { loadAtlas, TILE } from './atlas.js';
-import { makePanel } from './ui.js';
+import { makePanel, makePopout } from './ui.js';
 
 const { allHolds } = window.XAN;
 const { Game, BUILDINGS, BY_ID, CFG } = window.XANGAME;
@@ -78,6 +78,7 @@ const S = {
   water: new Set(), shoreSites: [],
   mask: { aspect: 'the Will', speakers: 'Speakers' }, // the god's local face, set from tier at boot
   lastWill: null, // last invocation: {utterance, aspect, speakers:[{name,parish,directive,word,orders}]} — powers the left Speakers panel
+  willHistory: [], // rolling log of invocations (newest first, cap 12): lastWill's shape + {at}. Powers the click-through popout's full "story so far" — the compact panel only ever sees lastWill.
   // Hover-highlight state (seed of the jobs system's assignment viz — see
   // resolveHome/startHaul for v.home/v.haulTarget): the hittable currently
   // hovered, its outline, and the ring per assigned villager it's showing.
@@ -1919,7 +1920,12 @@ async function callWill(occasion, instruction) {
     // stash this invocation so the left Speakers panel can show the full
     // directive → speaker → orders distribution, persisting between calls.
     S.lastWill = { utterance: d.utterance || null, aspect: d.aspect || aspect, speakers: heard };
+    S.willHistory.unshift({ ...S.lastWill, at: Date.now() });
+    if (S.willHistory.length > 12) S.willHistory.length = 12;
     renderWillPanel();
+    // the popout rebuilds on open, but if it's already open, don't make the
+    // lord wait for a close/reopen to see the newest doings land on top.
+    if (S.ui.willPopout && S.ui.willPopout.isOpen()) S.ui.willPopout.setContent(renderWillDetail());
     if (d.speakers && d.speakers.length) {
       setStewardLine(`${aspect} spoke through ${d.speakers.length} — ${bidden} work${bidden === 1 ? '' : 's'} bidden.`);
       renderOrders();
@@ -2023,6 +2029,11 @@ function initHUD(away) {
   S.ui.orders = makePanel({ region: 'tr', title: 'Works Bidden' });
   renderOrders();
   S.ui.speakers = makePanel({ region: 'l', title: S.mask.aspect || 'the Will' });
+  // the compact panel stays the quick glance; clicking it opens the full,
+  // scrollable "story so far" (renderWillDetail) in a popout.
+  S.ui.speakers.el.classList.add('clickable');
+  S.ui.speakers.el.addEventListener('click', openWillDetail);
+  S.ui.willPopout = makePopout({ title: willPopoutTitle() });
   renderWillPanel();
   updateHUD();
   initResTip();
@@ -2229,6 +2240,45 @@ function renderWillPanel() {
   const log = events ? `<div class="will-log">${events}</div>` : '';
   const status = S.willStatus ? `<div class="will-status">${S.willStatus}</div>` : '';
   S.ui.speakers.set(utt + speakers + log + status);
+}
+
+const willPopoutTitle = () => `${S.mask.aspect || 'the Will'} — the god's doings`;
+
+// openWillDetail — the left panel's click target. Rebuilds the popout's
+// content fresh every time it opens (per the "live-ish" contract: a stale
+// render would show doings that no longer match S.willHistory/chronicle).
+function openWillDetail() {
+  if (!S.ui.willPopout) return;
+  S.ui.willPopout.setTitle(willPopoutTitle());
+  S.ui.willPopout.open(renderWillDetail());
+}
+
+// renderWillDetail — the popout's full accounting: every kept invocation
+// (S.willHistory, newest first), each with the FULL speaker breakdown the
+// compact panel trims (parish, the heard directive, the interpretation
+// 'word', and every order chip — not just a few), then the WHOLE running
+// chronicle (not the compact panel's last-4 slice). Long enough to scroll.
+function renderWillDetail() {
+  const hist = S.willHistory.length ? S.willHistory
+    : (S.lastWill ? [{ ...S.lastWill, at: Date.now() }] : []);
+  const invs = hist.length ? hist.map((inv) => `
+    <div class="wd-inv">
+      <div class="wd-time dim">${new Date(inv.at).toLocaleTimeString()}</div>
+      ${inv.utterance ? `<div class="sp-utt">${icon('faith', 'sm')} ${inv.utterance}</div>` : ''}
+      ${(inv.speakers && inv.speakers.length) ? inv.speakers.map((sp) => `
+        <div class="sp-block">
+          <div class="sp-head"><span class="sp-name">${sp.name || 'a speaker'}</span> <span class="dim">· ${sp.parish || 'no parish'}</span></div>
+          <div class="sp-directive">heard: “${sp.directive || ''}”</div>
+          ${sp.word ? `<div class="wd-word">${sp.word}</div>` : ''}
+          <div class="sp-orders">${sp.orders.length
+            ? sp.orders.map((o) => `<span class="ordchip">${orderIcon(o)} ${orderText(o)}</span>`).join('')
+            : '<span class="dim">no work bidden</span>'}</div>
+        </div>`).join('') : '<div class="dim">The speakers kept silence.</div>'}
+    </div>`).join('') : '<div class="dim">The Will has not yet spoken.</div>';
+  const chron = S.chronicle.length
+    ? S.chronicle.map((c) => `<div class="cl ${c.kind}">${c.text}</div>`).join('')
+    : '<div class="dim">Nothing chronicled yet.</div>';
+  return `${invs}<div class="wd-chron-t">The Chronicle</div><div class="will-log">${chron}</div>`;
 }
 
 function pushChronicle(text, kind) {
