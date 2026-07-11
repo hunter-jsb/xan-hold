@@ -32,7 +32,7 @@ const ROLE_PIP = {
 const ROLE_LABEL = { villager: 'Villager', farmer: 'Farmer', woodcutter: 'Woodcutter', miner: 'Miner', soldier: 'Soldier', trader: 'Trader' };
 // Seconds of work a single unit of each order takes — so decrees are
 // carried out over time (a build you can watch), not the instant they land.
-const WORK_S = { build: 5, trade: 2.5, focus: 1 };
+const WORK_S = { build: 5, trade: 2.5, focus: 1, expand: 5 };
 
 // ---- state ----------------------------------------------------------
 const S = {
@@ -298,7 +298,7 @@ function placeTownhall() {
 function desiredCounts() {
   const d = {};
   for (const b of BUILDINGS) {
-    if (b.id === 'palisade') continue; // drawn as a wall border, not a plot
+    if (b.id === 'palisade' || b.id === 'farm') continue; // palisade = wall; farm = drawn from farmPlots
     const lv = S.game.level(b.id);
     if (lv > 0) d[b.id] = Math.min(MAX_PER_TYPE, Math.max(1, Math.round(lv / (b.kind === 'prod' ? 1.5 : 1))));
   }
@@ -333,7 +333,46 @@ function reconcileBuildings() {
       if (S.booted) constructionPoof(c.x + recipe.w * TILE / 2, c.y + recipe.h * TILE);
     }
   }
+  reconcileFarms();
   updatePalisade();
+}
+
+// Farms are individual fields (game.farmPlots), each with a size and crop.
+// They render from farmPlots — a new farm adds a field, expansion regrows one
+// bigger with fuller crops — separate from the level-driven building counts.
+function reconcileFarms() {
+  const plots = S.game.farmPlots || [];
+  for (let i = 0; i < plots.length; i++) {
+    const fp = plots[i], key = `farm#${i}`;
+    const ex = S.placed.get(key);
+    if (ex && ex.size === fp.size) continue;   // already drawn at this size
+    const plot = ex ? ex.plot : nextFreePlot();
+    if (!plot) return;
+    if (ex) { ground.removeChild(ex.container); ex.container.destroy({ children: true }); S.hittable = S.hittable.filter((h) => h.key !== key); }
+    const c = makeFarmField(fp);
+    c.x = plot.tx * TILE; c.y = plot.ty * TILE;
+    ground.addChild(c);
+    if (!ex) { c.alpha = 0; fadeIn(c); }
+    else if (S.booted) constructionPoof(c.x + c._n * TILE / 2, c.y + c._n * TILE); // a poof as it grows
+    S.placed.set(key, { container: c, plot, size: fp.size });
+    S.hittable.push({ key, x0: c.x / TILE, y0: c.y / TILE, x1: c.x / TILE + c._n, y1: c.y / TILE + c._n, type: 'farm' });
+  }
+}
+
+// makeFarmField — a grass-edged tilled field (Kenney 9-slice border) whose
+// interior fills with the plot's crop; footprint grows with size.
+function makeFarmField(fp) {
+  const n = 2 + fp.size; // size1→3x3, size2→4x4, size3→5x5
+  const c = new Container();
+  const cropTex = S.atlas.crops[fp.crop] || S.atlas.crops.greens;
+  for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
+    const ex = x === 0 ? -1 : x === n - 1 ? 1 : 0;
+    const ey = y === 0 ? -1 : y === n - 1 ? 1 : 0;
+    const tex = (ex === 0 && ey === 0) ? cropTex : S.atlas.farmDirt[`${ey},${ex}`];
+    const s = new Sprite(tex); s.x = x * TILE; s.y = y * TILE; c.addChild(s);
+  }
+  c._n = n;
+  return c;
 }
 
 // placeOreNodes drops an ore field into the wilderness — a rocky patch with
@@ -837,11 +876,20 @@ function advanceOrder(a, dt) {
     if (a.action === 'sell') S.game.sell(a.resource, q); else S.game.buy(a.resource, q);
     a.qtyLeft = 0;
   } else if (a.type === 'build') {
-    if (S.game.build(a.target)) { a.qtyLeft -= 1; a.waited = 0; }
+    // A new farm is its own field (with a crop); other builds raise a level.
+    const ok = a.target === 'farm' ? S.game.newFarm(a.crop) : S.game.build(a.target);
+    if (ok) { a.qtyLeft -= 1; a.waited = 0; }
     else {                       // can't afford — try to fund it; give up after a while
       autoFund(a.target); a.progress = 1; a.waited += dt;
       if (a.waited > 16) { a.status = 'skipped'; a.doneAt = Date.now(); }
       return;                    // (other crews keep working in parallel)
+    }
+  } else if (a.type === 'expand') {
+    if (S.game.expandFarm() >= 0) { a.qtyLeft -= 1; a.waited = 0; }
+    else {
+      autoFund('farm'); a.progress = 1; a.waited += dt;
+      if (a.waited > 16) { a.status = 'skipped'; a.doneAt = Date.now(); }
+      return;
     }
   }
   if (a.qtyLeft <= 0) { a.status = 'done'; a.doneAt = Date.now(); }
@@ -881,6 +929,12 @@ function autoFund(id) {
 function localSteward() {
   if (S.orderLog.some((o) => o.status === 'pending' || o.status === 'active')) return;
   const g = S.game, h = S.hold;
+  // Sometimes grow an existing field rather than raise a new farm, so both the
+  // expand and build paths show up on their own (the Will steers this later).
+  const wantFood = S.focus === 'food' || g.res.food < g.caps().food * 0.35;
+  if (wantFood && (g.farmPlots || []).some((p) => p.size < 3) && Math.random() < 0.5) {
+    pushOrder({ type: 'expand', target: 'farm', qty: 1 }); return;
+  }
   const want = [];
   if (g.pop >= g.popCap() - 0.5) want.push('longhouse');
   if (isRaided() && g.defense() < 3) want.push('palisade');
@@ -1042,11 +1096,12 @@ function renderLegend() {
 
 function orderText(o) {
   if (o.type === 'build') return `build ${o.target}${o.qty > 1 ? ' ×' + o.qty : ''}`;
+  if (o.type === 'expand') return 'expand a field';
   if (o.type === 'trade') return `${o.action} ${o.qty || ''} ${o.resource}`.replace(/\s+/g, ' ').trim();
   if (o.type === 'focus') return `focus ${o.value || o.target}`;
   return o.type;
 }
-const orderIcon = (o) => o.type === 'build' ? '🔨' : o.type === 'trade' ? (o.action === 'sell' ? '💰' : '🛒') : '🎯';
+const orderIcon = (o) => o.type === 'build' ? '🔨' : o.type === 'expand' ? '🌱' : o.type === 'trade' ? (o.action === 'sell' ? '💰' : '🛒') : '🎯';
 
 function orderEntryHTML(o) {
   const t = `${orderIcon(o)} ${orderText(o)}`;

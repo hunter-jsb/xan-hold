@@ -107,7 +107,39 @@ class Game {
       this.pushLog(`${hold.name} is yours to steward — a ${hold.tierName} of ${hold.realm}, in the ${hold.region}. The folk look to you.`, 'note');
     }
     this.lastTick = this.lastTick || Date.now();
+    // Farm fields: each is an individual plot with a size (grown by expansion)
+    // and a crop. Seeded from the farm level so old saves migrate cleanly.
+    this.farmPlots = this.farmPlots || [];
+    if (this.farmPlots.length === 0 && this.level('farm') > 0) {
+      const crops = ['greens', 'grain', 'roots'];
+      for (let i = 0; i < this.level('farm'); i++) this.farmPlots.push({ size: 1, crop: crops[i % 3] });
+    }
   }
+
+  // newFarm builds a fresh field (its own plot), optionally of a chosen crop —
+  // the alternative to expanding an existing one.
+  newFarm(crop) {
+    if (!this.build('farm')) return false; // pays build cost, raises farm level
+    const crops = ['greens', 'grain', 'roots'];
+    this.farmPlots.push({ size: 1, crop: crop || crops[this.farmPlots.length % 3] });
+    return true;
+  }
+
+  // expandFarm grows the smallest not-yet-maxed field in place — cheaper than a
+  // new farm but its yield still rises. Returns the plot index, or -1.
+  expandFarm() {
+    const MAX = 3;
+    let cand = null;
+    for (const p of this.farmPlots) if (p.size < MAX && (!cand || p.size < cand.size)) cand = p;
+    if (!cand) return -1;
+    const cost = this.expandCost(cand);
+    if (!Object.entries(cost).every(([k, v]) => this.res[k] >= v)) return -1;
+    for (const [k, v] of Object.entries(cost)) this.res[k] -= v;
+    cand.size += 1;
+    this.lvl.farm = this.level('farm') + 1; // a bigger field feeds more
+    return this.farmPlots.indexOf(cand);
+  }
+  expandCost(plot) { return { timber: Math.ceil(8 * plot.size), coin: Math.ceil(5 * plot.size) }; }
 
   // richOf resolves a building's richness key (water is derived).
   richOf(b) { return b.rich === 'water' ? this.water : (this.h.rich[b.rich] || 0); }
@@ -301,7 +333,7 @@ class Game {
 
   // ---- persistence ---------------------------------------------------
   serialize() {
-    return { res: this.res, pop: this.pop, lvl: this.lvl, founded: this.founded, log: this.log, raidClock: this.raidClock, lastTick: this.lastTick };
+    return { res: this.res, pop: this.pop, lvl: this.lvl, farmPlots: this.farmPlots, founded: this.founded, log: this.log, raidClock: this.raidClock, lastTick: this.lastTick };
   }
   save() { STORE.set('xanhold:' + this.h.id, JSON.stringify(this.serialize())); }
   static load(hold) {
