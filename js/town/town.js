@@ -16,7 +16,7 @@ const PLOT = 4;                 // a building plot is 4x4 tiles (roomy — no cr
 const TOWN_W = 96, TOWN_H = 72; // a big wilderness map the camera drifts across
 const PLOTS_X = Math.floor(TOWN_W / PLOT), PLOTS_Y = Math.floor(TOWN_H / PLOT);
 const DAY_MS = 240000;          // a full day/night in real ms
-const STEWARD_MS = Number(localStorage.getItem('xh_stewardMs') || 480000); // ambient decree cadence (8 min)
+const STEWARD_MS = Number(localStorage.getItem('xh_stewardMs') || 1800000); // ambient decree cadence — faith is the primary trigger now; this is just a slow backstop (30 min)
 const LOCAL_MS = 6000;          // heuristic steward cadence
 const MAX_PER_TYPE = 8;         // how many of one building we draw
 const ROLE_TINT = {
@@ -858,6 +858,14 @@ function townTick() {
   const dt = Math.min(2, (now - S.game.lastTick) / 1000);
   S.game.step(dt); S.game.lastTick = now; S.game.save();
 
+  // Faith crossing its threshold is the Will's primary invocation trigger now
+  // (STEWARD_MS's ambient timer is just a slow backstop) — the god speaks
+  // when the hold's speakers have raised enough of it, not on a fixed clock.
+  if (S.game.faithReady) {
+    S.game.faithReady = false;
+    callWill(`${S.mask.aspect} is invoked`);
+  }
+
   executeOrders(dt);
   reconcileBuildings();
   reconcileVillagers();
@@ -1083,7 +1091,7 @@ function stewardState(occasion, instruction) {
 }
 
 // ---- HUD ------------------------------------------------------------
-const RES_ICON = { food: '🌾', timber: '🪵', stone: '🪨', ore: '⛏️', salt: '🧂', coin: '🪙' };
+const RES_ICON = { food: '🌾', timber: '🪵', stone: '🪨', ore: '⛏️', salt: '🧂', coin: '🪙', faith: '✦' };
 function initHUD(away) {
   document.getElementById('hname').textContent = S.hold.name;
   document.getElementById('hsub').textContent =
@@ -1106,13 +1114,22 @@ function updateHUD() {
     const cls = net > 0.01 ? 'up' : net < -0.01 ? 'down' : '';
     return `<span class="res" data-res="${k}"><b>${RES_ICON[k]}${Math.floor(g.res[k])}</b><i class="${cls}">${net >= 0 ? '+' : ''}${net.toFixed(1)}</i></span>`;
   }).join('');
+  // Faith is a meter toward the Will's next invocation, not a tradeable good —
+  // shown as current/threshold (like pop's current/cap), not a flow.
+  const faith = `<span class="res" data-res="faith"><b>${RES_ICON.faith}${Math.floor(g.faith)}/${g.faithThreshold()}</b></span>`;
   document.getElementById('resstrip').innerHTML =
-    strip + `<span class="res"><b>👥${Math.floor(g.pop)}/${g.popCap()}</b></span><span class="res"><b>🛡️${g.defense()}</b></span>`;
+    strip + faith + `<span class="res"><b>👥${Math.floor(g.pop)}/${g.popCap()}</b></span><span class="res"><b>🛡️${g.defense()}</b></span>`;
 }
 
 // resourceBreakdown lists what each work adds/eats for one resource per second.
 function resourceBreakdown(k) {
   const g = S.game, eff = g.efficiency(), lines = [];
+  if (k === 'faith') {
+    // Faith has one source: the hold's speakers (one base, +1/reliquary).
+    const n = g.speakers();
+    lines.push({ label: `${n} speaker${n === 1 ? '' : 's'} → faith`, val: n * CFG.faithPerSpeaker });
+    return lines;
+  }
   for (const b of BUILDINGS) {
     if (b.kind !== 'prod' || b.res !== k) continue;
     const lv = g.level(b.id); if (!lv) continue;
@@ -1135,7 +1152,12 @@ function initResTip() {
     const rows = lines.length
       ? lines.map((l) => `<div class="bl"><span>${l.label}</span><b class="${l.val >= 0 ? 'up' : 'down'}">${l.val >= 0 ? '+' : ''}${l.val.toFixed(2)}</b></div>`).join('')
       : '<div class="dim">no works yet</div>';
-    tip.innerHTML = `<div class="ttl">${RES_ICON[k]} ${k}</div>${rows}<div class="bl net"><span>net</span><b class="${net >= 0 ? 'up' : 'down'}">${net >= 0 ? '+' : ''}${net.toFixed(2)}/s</b></div>`;
+    // Faith's footer shows progress toward the invocation threshold instead
+    // of a net rate — that's the number that actually matters here.
+    const footer = k === 'faith'
+      ? `<div class="bl net"><span>threshold</span><b>${Math.floor(S.game.faith)} / ${S.game.faithThreshold()}</b></div>`
+      : `<div class="bl net"><span>net</span><b class="${net >= 0 ? 'up' : 'down'}">${net >= 0 ? '+' : ''}${net.toFixed(2)}/s</b></div>`;
+    tip.innerHTML = `<div class="ttl">${RES_ICON[k]} ${k}</div>${rows}${footer}`;
     tip.style.display = 'block'; tip.style.left = e.clientX + 'px'; tip.style.top = e.clientY + 'px';
   });
   bar.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
