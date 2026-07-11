@@ -105,7 +105,7 @@ class Game {
       const top = Object.entries(hold.rich).sort((a, b) => b[1] - a[1])[0][0];
       this.res[top] = (this.res[top] || 0) + 20;
       this.pop = 8;
-      this.lvl = { farm: 1 };
+      this.lvl = {}; // no starting farm — the town breaks ground on its first one (see localSteward)
       if (hold.tierName === 'saltern') this.lvl.saltern = 1;
       if (this.water > 0.12) this.lvl.wharf = 1;
       this.founded = Date.now();

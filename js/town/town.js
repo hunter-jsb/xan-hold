@@ -501,13 +501,13 @@ function outerBias(type) {
 // instead of plots scattered wherever the old flat allocator found room.
 function farmlandAnchor() {
   if (S.farmAnchor) return S.farmAnchor;
-  const r = rng((S.hold.x * 104729) ^ (S.hold.y * 65537) ^ 0xfa4b1a);
+  const r = Math.random; // NOT seeded — the farmland lands somewhere new each run, not the same spot every time
   const ccx = CENTER_PX, ccy = CENTER_PY;
-  const baseR = coreRadius() + 3;
+  const baseR = coreRadius() + 1; // hug just outside the core (near the folk), not flung out
   let best = null, bestScore = -1;
   for (let i = 0; i < 8; i++) {
-    const a = (i / 8) * Math.PI * 2 + r() * 0.3;
-    const dist = baseR + 2 + r() * 2;
+    const a = (i / 8) * Math.PI * 2 + r() * 0.5;
+    const dist = baseR + r() * 2;
     const px = Math.round(ccx + Math.cos(a) * dist), py = Math.round(ccy + Math.sin(a) * dist * 0.8);
     if (px < 1 || py < 1 || px >= PLOTS_X - 1 || py >= PLOTS_Y - 1) continue;
     // Score: how much open (non-reserved) ground surrounds this candidate —
@@ -2076,6 +2076,12 @@ function planDefensiveSegment() {
 function localSteward() {
   if (S.orderLog.some((o) => o.status === 'pending' || o.status === 'active')) return;
   const g = S.game, h = S.hold;
+  // The hold spawns with no farm — break ground on the first food source at
+  // once (unless a wharf already feeds the folk), wherever the farmland district
+  // anchors THIS run, so the folk have food and a reason to grow.
+  if (!g.level('farm') && !g.level('wharf') && g.canAfford('farm')) {
+    pushOrder({ type: 'build', target: 'farm' }); return;
+  }
   // Farmland is a DISTRICT that fills before it sprawls: while any existing
   // field still has room to grow, expand it rather than breaking ground on a
   // new one (see wantsNewFarmField/nextFarmPlot) — replaces the old
@@ -2105,9 +2111,12 @@ function localSteward() {
   if (S.focus === 'food') want.push('farm');
   // Raise the faith now and then — reliquaries widen the Will's voice.
   if (g.level('reliquary') < 4 && g.pop > 12 && Math.random() < 0.12) want.push('reliquary');
-  // then the hold's richest producers
+  // then the hold's richest producers — richness sets the lean, but a random
+  // jitter keeps the build ORDER from being identical every run (the town
+  // shouldn't develop the exact same way every playthrough).
   const prodByRes = { food: ['farm', 'wharf'], timber: ['sawmill'], stone: ['quarry'], ore: ['mine'], salt: ['saltern'], coin: ['market'] };
-  for (const [res] of Object.entries(h.rich).sort((a, b) => b[1] - a[1]))
+  const leaning = Object.entries(h.rich).map(([res, v]) => [res, v + Math.random() * 0.18]).sort((a, b) => b[1] - a[1]);
+  for (const [res] of leaning)
     for (const id of (prodByRes[res] || [])) want.push(id);
   want.push('longhouse');
   for (const id of want) {
