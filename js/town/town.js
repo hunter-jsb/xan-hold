@@ -1169,6 +1169,7 @@ function regrowOne() {
     const ty = Math.floor(TOWN_H / 2 + (Math.random() - 0.5) * 38);
     if (tx < 1 || ty < 1 || tx >= TOWN_W - 1 || ty >= TOWN_H - 1) continue;
     if (S.usedPlots.has(`${Math.floor(tx / PLOT)},${Math.floor(ty / PLOT)}`)) continue;
+    if (S.water.has(`${tx},${ty}`) || S.walls.has(`${tx},${ty}`)) continue; // no saplings in the river or on the wall
     const px = tx * TILE + TILE / 2, py = ty * TILE + TILE;
     if (S.woodNodes.some((n) => Math.abs(n.x - px) < TILE * 2 && Math.abs(n.y - py) < TILE * 2)) continue;
     const rec = S.treePool[(Math.random() * S.treePool.length) | 0];
