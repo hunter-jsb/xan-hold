@@ -12,6 +12,9 @@ const CFG = {
   costScale: 1.16,        // per-level upgrade cost multiplier
   raidIntervalS: 135,     // mean seconds between raid checks
   maxOfflineH: 12,        // cap offline catch-up
+  faithPerSpeaker: 0.4,   // faith/s each speaker (1 base + 1/reliquary) wells up
+  faithBase: 60,          // faithThreshold() floor (at 1 speaker)
+  faithPerSpeakerThresh: 40, // faithThreshold() rise per speaker
   baseCaps: { food: 500, timber: 400, stone: 300, ore: 250, salt: 200, coin: 1e9 },
   // Market base coin-price per unit; buying a good you lack is dear,
   // selling one you're rich in is how a hold earns coin.
@@ -109,6 +112,11 @@ class Game {
       this.pushLog(`${hold.name} is yours to steward — a ${hold.tierName} of ${hold.realm}, in the ${hold.region}. The folk look to you.`, 'note');
     }
     this.lastTick = this.lastTick || Date.now();
+    // Faith: the hold's devotion toward the fallen god, accumulated in step()
+    // and spent when it crosses faithThreshold(). Not a tradeable resource —
+    // no res[] entry, no cap — so pre-faith saves just start at 0.
+    this.faith = this.faith || 0;
+    this.faithReady = false; // set true by stepFaith() when faith crosses threshold
     // Farm fields: each is an individual plot with a size (grown by expansion)
     // and a crop. Seeded from the farm level so old saves migrate cleanly.
     this.farmPlots = this.farmPlots || [];
@@ -197,6 +205,16 @@ class Game {
 
   defense() { return this.level('palisade') * BY_ID.palisade.def + this.bon.defBonus; }
 
+  // speakers — how many voices the hold's shrines give the fallen god: one
+  // always present, plus one more per reliquary raised.
+  speakers() { return 1 + this.level('reliquary'); }
+
+  // faithThreshold — the bar faith must clear to invoke the Will. It climbs
+  // with speakers, so a more devout hold needs a fuller welling of faith —
+  // but its speakers also fill it faster, so more reliquaries still means
+  // the god is heard from more often, not less.
+  faithThreshold() { return CFG.faithBase + this.speakers() * CFG.faithPerSpeakerThresh; }
+
   caps() {
     const s = 1 + this.level('granary') * BY_ID.granary.capMul;
     const out = {};
@@ -265,6 +283,19 @@ class Game {
       this.pop = Math.min(this.popCap(), this.pop + CFG.popGrowth * (0.5 + surplus) * dt);
     }
     this.stepRaids(dt, offline);
+    this.stepFaith(dt);
+  }
+
+  // stepFaith accumulates faith from the hold's speakers; crossing the
+  // threshold marks faithReady so town.js can invoke the Will, carrying any
+  // overflow into the next cycle rather than losing it.
+  stepFaith(dt) {
+    this.faith = (this.faith || 0) + this.speakers() * CFG.faithPerSpeaker * dt;
+    const thresh = this.faithThreshold();
+    while (this.faith >= thresh) {
+      this.faith -= thresh;
+      this.faithReady = true;
+    }
   }
 
   // stepRaids counts down a raid clock; on a strike, danger (mitigated by
@@ -335,7 +366,7 @@ class Game {
 
   // ---- persistence ---------------------------------------------------
   serialize() {
-    return { res: this.res, pop: this.pop, lvl: this.lvl, farmPlots: this.farmPlots, founded: this.founded, log: this.log, raidClock: this.raidClock, lastTick: this.lastTick };
+    return { res: this.res, pop: this.pop, lvl: this.lvl, farmPlots: this.farmPlots, faith: this.faith, founded: this.founded, log: this.log, raidClock: this.raidClock, lastTick: this.lastTick };
   }
   save() { STORE.set('xanhold:' + this.h.id, JSON.stringify(this.serialize())); }
   static load(hold) {
