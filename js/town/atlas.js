@@ -43,6 +43,8 @@ const RECIPES = {
   ] },
   // The market is Kenney's little trade cart.
   market: { w: 1, h: 1, tiles: [{ i: 57, x: 0, y: 0 }] },
+  // The reliquary is a whole-image sprite (a church), not tiles.
+  reliquary: { w: 4, h: 4, image: 'church' },
 };
 
 // A trade prop set beside a cottage so its craft reads at a glance.
@@ -104,6 +106,12 @@ export async function loadAtlas() {
   const boulderTex = await Assets.load('/assets/mining/nodes/boulderNode.png');
   boulderTex.source.scaleMode = 'nearest';
 
+  // Whole-image buildings (the church reliquary) — linear scale for a clean
+  // downscale from its high-res art to a few tiles wide.
+  const churchTex = await Assets.load('/assets/buildings/church.png');
+  churchTex.source.scaleMode = 'linear';
+  const images = { church: churchTex };
+
   // Crop tiles for farm fields (ArMM overworld, CC0). Tilled-dirt based, so
   // they sit inside a Kenney grass-edged border and never touch grass directly
   // (ArMM's saturated green would clash at the seam).
@@ -119,5 +127,5 @@ export async function loadAtlas() {
     '1,-1': tex(36), '1,0': tex(37), '1,1': tex(38),
   };
 
-  return { tex, ground, trees: TREES, clusters: CLUSTERS, fence, walk, oreTex, boulderTex, crops, farmDirt, cropOrder: ['greens', 'grain', 'roots'], RECIPES, PROP, HOUSE_OF };
+  return { tex, ground, trees: TREES, clusters: CLUSTERS, fence, walk, oreTex, boulderTex, images, crops, farmDirt, cropOrder: ['greens', 'grain', 'roots'], RECIPES, PROP, HOUSE_OF };
 }

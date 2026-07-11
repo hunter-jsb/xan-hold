@@ -21,15 +21,16 @@ const LOCAL_MS = 6000;          // heuristic steward cadence
 const MAX_PER_TYPE = 8;         // how many of one building we draw
 const ROLE_TINT = {
   villager: 0xffffff, farmer: 0xcfe8a0, woodcutter: 0xbfe0b8,
-  miner: 0xcfcfe0, soldier: 0x9fb8ea, trader: 0xffdf9a,
+  miner: 0xcfcfe0, soldier: 0x9fb8ea, trader: 0xffdf9a, speaker: 0xf3e4c0,
 };
 // A saturated pip above the head — the readable role signal (a multiply
 // tint on a brown sprite can't say "blue soldier" clearly; a pip can).
 const ROLE_PIP = {
   villager: 0xe6dcc4, farmer: 0x74c53a, woodcutter: 0x2f8f4e,
-  miner: 0xc9ced6, soldier: 0x4f86e0, trader: 0xf2c14e,
+  miner: 0xc9ced6, soldier: 0x4f86e0, trader: 0xf2c14e, speaker: 0xffdf6a,
 };
-const ROLE_LABEL = { villager: 'Villager', farmer: 'Farmer', woodcutter: 'Woodcutter', miner: 'Miner', soldier: 'Soldier', trader: 'Trader' };
+// Speaker's label is set to the hold's aspect at boot (Saltspeaker, Deepspeaker…).
+const ROLE_LABEL = { villager: 'Villager', farmer: 'Farmer', woodcutter: 'Woodcutter', miner: 'Miner', soldier: 'Soldier', trader: 'Trader', speaker: 'Speaker' };
 // Seconds of work a single unit of each order takes — so decrees are
 // carried out over time (a build you can watch), not the instant they land.
 const WORK_S = { build: 5, trade: 2.5, focus: 1, expand: 5 };
@@ -46,12 +47,36 @@ const S = {
   hittable: [], // building bounds for hover-identify
   palisadeSprites: [], palisadeSig: null,
   oreNodes: [], woodNodes: [], // resource nodes the folk walk out to work
+  mask: { aspect: 'the Will', speakers: 'Speakers' }, // the god's local face, set from tier at boot
 };
 const heldKeys = new Set(); // WASD currently pressed
 const BUILD_NAME = {
   farm: 'Farm', wharf: 'Fishing Wharf', sawmill: 'Sawmill', quarry: 'Quarry',
   mine: 'Mine', saltern: 'Saltern', market: 'Market', longhouse: 'Longhouse', granary: 'Storehouse',
+  reliquary: 'Reliquary',
 };
+
+// holdMask — the god wears the face of the land: the hold's lord-archetype
+// (tier), falling back to its dominant resource, sets the aspect + speakers.
+function holdMask(h) {
+  const byTier = {
+    saltern: { aspect: 'the Salt', speakers: 'Saltspeakers' },
+    seat: { aspect: 'the Current', speakers: 'Currentspeakers' },
+    headwater: { aspect: 'the Wellspring', speakers: 'Springspeakers' },
+    march: { aspect: 'the Deep', speakers: 'Deepspeakers' },
+  };
+  if (byTier[h.tierName]) return byTier[h.tierName];
+  const top = Object.entries(h.rich).sort((a, b) => b[1] - a[1])[0][0];
+  const byRes = {
+    timber: { aspect: 'the Green', speakers: 'Greenspeakers' },
+    ore: { aspect: 'the Vein', speakers: 'Veinspeakers' },
+    stone: { aspect: 'the Deep', speakers: 'Deepspeakers' },
+    food: { aspect: 'the Current', speakers: 'Currentspeakers' },
+    salt: { aspect: 'the Salt', speakers: 'Saltspeakers' },
+    coin: { aspect: 'the Road', speakers: 'Roadspeakers' },
+  };
+  return byRes[top] || { aspect: 'the Will', speakers: 'Speakers' };
+}
 
 let app, world, ground, entities, night, alarmFx;
 
@@ -77,6 +102,8 @@ async function boot() {
   }
   mark('pick hold');
   S.hold = pickHold();
+  S.mask = holdMask(S.hold);                         // the god's local face
+  ROLE_LABEL.speaker = S.mask.speakers.replace(/s$/, ''); // e.g. "Deepspeaker" in the Folk legend
   S.game = Game.load(S.hold);
   const away = S.game.catchUp();
 
@@ -119,7 +146,7 @@ async function boot() {
   app.ticker.add(onFrame);
   setInterval(townTick, 1000);
   setInterval(localSteward, LOCAL_MS);
-  setInterval(() => callSteward('the turning of the season'), STEWARD_MS);
+  setInterval(() => callWill('the turning of the season'), STEWARD_MS);
   // No decree on boot — the town runs on its local heuristic and only spends
   // a Claude call every STEWARD_MS or when you press P, so reloads are free.
 }
@@ -250,6 +277,16 @@ function placeTree(cx, baseY, rec) {
 // ---- buildings ------------------------------------------------------
 function makeBuildingContainer(recipe, propIdx) {
   const c = new Container();
+  if (recipe.image) {
+    // A whole-image building (the church reliquary) — one sprite scaled so its
+    // width spans recipe.w tiles, anchored at its base.
+    const s = new Sprite(S.atlas.images[recipe.image]);
+    s.anchor.set(0.5, 1);
+    s.scale.set((recipe.w * TILE) / s.texture.width);
+    s.x = recipe.w * TILE / 2; s.y = recipe.h * TILE;
+    c.addChild(s); c.baseH = recipe.h;
+    return c;
+  }
   for (const t of recipe.tiles) {
     const s = new Sprite(S.atlas.tex(t.i));
     s.x = t.x * TILE; s.y = t.y * TILE; c.addChild(s);
@@ -269,6 +306,7 @@ function recipeFor(type) {
   const { RECIPES, PROP, HOUSE_OF } = S.atlas;
   if (type === 'farm') return { recipe: RECIPES.farm, prop: null };
   if (type === 'market') return { recipe: RECIPES.market, prop: null };
+  if (type === 'reliquary') return { recipe: RECIPES.reliquary, prop: null };
   const house = HOUSE_OF[type] || 'cottageRed';
   return { recipe: RECIPES[house], prop: PROP[type] ?? null };
 }
@@ -486,6 +524,7 @@ function roleWeights() {
   w.miner = g.level('mine') + g.level('quarry');
   w.trader = g.level('market');
   w.soldier = g.defense() * 2 + (isRaided() ? 3 : 0);
+  w.speaker = 1 + g.level('reliquary') * 2; // always at least one; reliquaries raise more
   return Object.entries(w).filter(([, v]) => v > 0);
 }
 
@@ -942,6 +981,8 @@ function localSteward() {
   if (g.res.food >= g.caps().food * 0.92) want.push('granary');
   if (S.focus === 'defense') want.push('palisade');
   if (S.focus === 'food') want.push('farm');
+  // Raise the faith now and then — reliquaries widen the Will's voice.
+  if (g.level('reliquary') < 4 && g.pop > 12 && Math.random() < 0.12) want.push('reliquary');
   // then the hold's richest producers
   const prodByRes = { food: ['farm', 'wharf'], timber: ['sawmill'], stone: ['quarry'], ore: ['mine'], salt: ['saltern'], coin: ['market'] };
   for (const [res] of Object.entries(h.rich).sort((a, b) => b[1] - a[1]))
@@ -957,27 +998,44 @@ function localSteward() {
 
 // callSteward: ask Claude for orders + a chronicle line. Soft-fails to the
 // local steward if the server/Claude is unavailable.
-async function callSteward(occasion, instruction) {
+// callWill invokes the Divine Will: Opus utters terse directives as the hold's
+// aspect (the Salt/Current/Deep…), and its speakers (Haiku) each interpret one
+// into concrete orders. The utterance + each speaker's word land in the log.
+async function callWill(occasion, instruction) {
   if (S.stewardBusy) return;
   S.stewardBusy = true;
-  setStewardLine(instruction ? 'The Steward weighs your word…' : 'The Steward deliberates…');
+  const aspect = S.mask.aspect;
+  setStewardLine(instruction ? `${aspect} weighs your word…` : `${aspect} stirs…`);
   try {
-    const res = await fetch('/steward', {
+    const res = await fetch('/will', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(stewardState(occasion, instruction)),
+      body: JSON.stringify(willState(occasion, instruction)),
     });
     const d = await res.json();
-    if (d.chronicle) pushChronicle('“' + d.chronicle + '”', 'steward');
-    if (Array.isArray(d.orders) && d.orders.length) {
-      d.orders.map(normalizeOrder).forEach(pushOrder);
-      setStewardLine(`The Steward decrees ${d.orders.length} order${d.orders.length > 1 ? 's' : ''}.`);
+    if (d.utterance) pushChronicle('✦ ' + d.utterance, 'will');
+    let bidden = 0;
+    for (const sp of (d.speakers || [])) {
+      if (sp.word) pushChronicle('“' + sp.word + '”', 'speaker');
+      if (Array.isArray(sp.orders)) { sp.orders.map(normalizeOrder).forEach(pushOrder); bidden += sp.orders.length; }
+    }
+    if (d.speakers && d.speakers.length) {
+      setStewardLine(`${aspect} spoke through ${d.speakers.length} — ${bidden} work${bidden === 1 ? '' : 's'} bidden.`);
       renderOrders();
-    } else setStewardLine('The Steward keeps its counsel.');
+    } else setStewardLine(`${aspect} keeps its silence.`);
   } catch (e) {
-    setStewardLine('(no Steward — the folk act on their own)');
+    setStewardLine('(the Will is distant — the folk act alone)');
   } finally {
     setTimeout(() => S.stewardBusy = false, 500);
   }
+}
+
+// willState is the town's state plus the mask (aspect/speakers) and bandwidth
+// (temples = 1 + reliquaries) the Will pipeline needs.
+function willState(occasion, instruction) {
+  const s = stewardState(occasion, instruction);
+  s.mask = S.mask;
+  s.temples = 1 + S.game.level('reliquary');
+  return s;
 }
 
 function normalizeOrder(o) {
@@ -988,7 +1046,7 @@ function normalizeOrder(o) {
 // words, or just press Enter for a free-hand (regular) decree.
 function showStewardAsk() {
   const box = document.getElementById('stewardask'), input = document.getElementById('stewardinput');
-  if (!box || !input) { callSteward('the steward is summoned'); return; }
+  if (!box || !input) { callWill('the Will is summoned'); return; }
   box.style.display = 'flex'; input.value = '';
   setTimeout(() => input.focus(), 0); // defer so the triggering 'p' keydown doesn't type into it
 }
@@ -1001,7 +1059,7 @@ function initStewardAsk() {
       e.preventDefault();
       const v = input.value.trim();
       box.style.display = 'none'; input.blur();
-      callSteward(v ? 'the lord instructs the Steward' : 'the steward is summoned', v || null);
+      callWill(v ? 'the lord instructs the Will' : 'the Will is summoned', v || null);
     } else if (e.key === 'Escape') {
       e.preventDefault(); box.style.display = 'none'; input.blur();
     }
@@ -1032,7 +1090,7 @@ function initHUD(away) {
     ` · ${S.hold.tierName} of ${S.hold.realm} · ${S.hold.ancestry} · ${S.hold.region}`;
   if (away && away.raids) pushChronicle(`While you were away, raiders came ${away.raids}×.`, 'raid');
   pushChronicle(`${S.hold.name} wakes to another day.`, 'note');
-  S.ui.orders = makePanel({ region: 'tr', title: 'Steward’s Log' });
+  S.ui.orders = makePanel({ region: 'tr', title: 'Works Bidden' });
   S.ui.legend = makePanel({ region: 'br', title: 'Folk' });
   renderLegend();
   renderOrders();

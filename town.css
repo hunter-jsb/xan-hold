@@ -32,6 +32,9 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #0d1014; }
 #chronicle { display: flex; flex-direction: column; gap: 3px; }
 .cl { font-size: 13px; line-height: 1.4; opacity: .95; }
 .cl.steward { font-family: var(--serif); font-size: 15px; color: #ffe7b0; }
+.cl.will { font-family: var(--serif); font-size: 16px; color: #ffdc7a;
+  text-shadow: 0 0 10px rgba(255,190,70,.35); letter-spacing: .01em; }
+.cl.speaker { color: #d9c8a2; font-style: italic; }
 .cl.raid { color: var(--bad); }
 .cl.note { color: var(--dim); }
 #stewardline { font-size: 12px; margin-top: 6px; min-height: 14px; }

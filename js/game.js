@@ -43,6 +43,8 @@ const BUILDINGS = [
     cost: { timber: 16, stone: 10 }, desc: 'Granaries and sheds — deeper stores of every good.' },
   { id: 'palisade', name: 'Palisade & Watch', kind: 'defense', def: 1,
     cost: { timber: 24, stone: 20 }, desc: 'Wall and watchtower — blunts the wilds’ raids.' },
+  { id: 'reliquary', name: 'Reliquary', kind: 'faith',
+    cost: { timber: 22, stone: 14 }, desc: 'A shrine over a shard of the Fallen — widens the god’s voice (one more speaker, longer word).' },
 ];
 const BY_ID = Object.fromEntries(BUILDINGS.map((b) => [b.id, b]));
 

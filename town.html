@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Steward of a Hold · Xan</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏰</text></svg>">
   <link rel="stylesheet" href="/town.css">
   <!-- Pixi is vendored locally (no CDN) and resolved via an import map. -->
   <script type="importmap">
@@ -25,13 +26,13 @@
       <div id="chronicle"></div>
       <div id="stewardline" class="dim"></div>
     </div>
-    <div id="hint" class="dim">scroll <b>zoom</b> · drag / <b>WASD</b> pan · <b>P</b> Steward · <b>H</b> hide UI · <b>M</b> map · <b>R</b> reset</div>
+    <div id="hint" class="dim">scroll <b>zoom</b> · drag / <b>WASD</b> pan · <b>P</b> summon the Will · <b>H</b> hide UI · <b>M</b> map · <b>R</b> reset</div>
   </div>
 
   <div id="btip"></div>
   <div id="restip"></div>
   <div id="stewardask">
-    <label>Instruct the Steward <span class="dim">— or press Enter for a free hand · Esc to cancel</span></label>
+    <label>A word to the Will <span class="dim">— or press Enter to leave it to the god · Esc to cancel</span></label>
     <input id="stewardinput" type="text" maxlength="200" autocomplete="off"
            placeholder="e.g. throw up walls and stockpile food before winter">
   </div>
