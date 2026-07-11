@@ -2016,8 +2016,13 @@ function advanceOrder(a, dt) {
     // did (S.game.build/canAfford still gate it — game.js is unchanged) —
     // only the RESULT differs: real tiles (a segment and/or a gate) land on
     // the grid instead of an auto-ring being redrawn.
-    if (!((a.from && a.to) || a.gate)) { a.status = 'skipped'; a.doneAt = Date.now(); return; } // malformed order — no geometry to build
-    if (S.game.build('palisade')) {
+    if (!((a.from && a.to) || a.gate)) {  // no geometry (e.g. the Will's `build palisade`) — plan the next segment ourselves
+      const seg = planDefensiveSegment();
+      if (seg) { a.from = seg.from; a.to = seg.to; a.gate = seg.gate; }
+    }
+    if (!((a.from && a.to) || a.gate)) {  // the core is fully walled already — just deepen the level and finish
+      S.game.build('palisade'); a.qtyLeft = 0;
+    } else if (S.game.build('palisade')) {
       if (a.from && a.to) layWallSegment(a.from, a.to, a.gate);
       else if (a.gate) layGate(a.gate);
       a.qtyLeft -= 1; a.waited = 0;
@@ -2112,7 +2117,11 @@ function localSteward() {
   // segment with a gate — instead of magically redrawing a ring. Segments
   // accumulate (see wallEdgesBuilt in planDefensiveSegment), so the town's
   // wall visibly grows piecemeal even with no Will involved.
-  const wantWall = (isRaided() && g.defense() < 3) || S.focus === 'defense';
+  // Wall the core proactively as the hold grows (not only under raid): once
+  // there are folk to protect, ring the core one side at a time until all four
+  // are up — so a wall actually appears even when the Will is quiet.
+  const wantWall = (isRaided() && g.defense() < 3) || S.focus === 'defense'
+    || (g.pop > 6 && S.wallEdgesBuilt.size < 4 && Math.random() < 0.2);
   if (wantWall && g.canAfford('palisade')) {
     const seg = planDefensiveSegment();
     if (seg) { pushOrder({ type: 'wall', target: 'palisade', from: seg.from, to: seg.to, gate: seg.gate, qty: 1 }); return; }
@@ -2195,9 +2204,14 @@ function willState(occasion, instruction) {
 }
 
 function normalizeOrder(o) {
+  // A "build a wall/palisade" decree IS a wall order — the Will's speakers can
+  // only emit build/trade/focus, so their wall wish arrives as `build palisade`.
+  // Route it to the segment system (which lays real tiles) instead of the
+  // building-site path (which would only deepen the defense level, no wall).
+  const type = (o.type === 'build' && o.target === 'palisade') ? 'wall' : o.type;
   return {
-    type: o.type, target: o.target, action: o.action, resource: o.resource, value: o.value || o.target, qty: o.qty || 1,
-    from: o.from, to: o.to, gate: o.gate,     // a speaker's 'wall' order: {x,y} segment endpoints and/or a gate point
+    type, target: o.target, action: o.action, resource: o.resource, value: o.value || o.target, qty: o.qty || 1,
+    from: o.from, to: o.to, gate: o.gate,     // a 'wall' order: segment endpoints/gate (planned on demand if absent)
   };
 }
 
