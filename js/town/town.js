@@ -96,7 +96,7 @@ let app, world, ground, entities, night, alarmFx;
 function rng(seed) { let s = seed >>> 0 || 1; return () => (s = (s * 1664525 + 1013904223) >>> 0) / 4294967296; }
 
 // ---- boot -----------------------------------------------------------
-const mark = (m) => { const e = document.getElementById('stewardline'); if (e) e.textContent = 'boot: ' + m; };
+const mark = (m) => { console.log('boot:', m); };  // boot progress (the Will panel isn't up yet)
 // resetWorld wipes every hold's saved progress (localStorage), so the
 // world starts fresh. Triggered by ?reset in the URL or the R key.
 function resetWorld() {
@@ -1460,11 +1460,9 @@ async function callWill(occasion, instruction) {
       body: JSON.stringify(willState(occasion, instruction)),
     });
     const d = await res.json();
-    if (d.utterance) pushChronicle(icon('faith', 'sm') + ' ' + d.utterance, 'will');
     let bidden = 0;
     const heard = [];
     for (const sp of (d.speakers || [])) {
-      if (sp.word) pushChronicle('“' + sp.word + '”', 'speaker');
       const orders = Array.isArray(sp.orders) ? sp.orders.map(normalizeOrder) : [];
       if (orders.length) { orders.forEach(pushOrder); bidden += orders.length; }
       heard.push({ name: sp.name, parish: sp.parish, directive: sp.directive, word: sp.word || '', orders });
@@ -1472,7 +1470,7 @@ async function callWill(occasion, instruction) {
     // stash this invocation so the left Speakers panel can show the full
     // directive → speaker → orders distribution, persisting between calls.
     S.lastWill = { utterance: d.utterance || null, aspect: d.aspect || aspect, speakers: heard };
-    renderSpeakers();
+    renderWillPanel();
     if (d.speakers && d.speakers.length) {
       setStewardLine(`${aspect} spoke through ${d.speakers.length} — ${bidden} work${bidden === 1 ? '' : 's'} bidden.`);
       renderOrders();
@@ -1575,8 +1573,8 @@ function initHUD(away) {
   pushChronicle(`${S.hold.name} wakes to another day.`, 'note');
   S.ui.orders = makePanel({ region: 'tr', title: 'Works Bidden' });
   renderOrders();
-  S.ui.speakers = makePanel({ region: 'l', title: 'The Speakers' });
-  renderSpeakers();
+  S.ui.speakers = makePanel({ region: 'l', title: S.mask.aspect || 'the Will' });
+  renderWillPanel();
   updateHUD();
   initResTip();
   initChipToggle();
@@ -1731,38 +1729,38 @@ function renderOrders() {
   S.ui.orders.set(rows);
 }
 
-// renderSpeakers draws the left "The Speakers" panel from S.lastWill: the
-// Will's utterance up top, then one block per speaker — the directive it
-// heard, its word (how it read that directive), and the orders it bid —
-// so the whole directive → speaker → orders chain is legible at a glance.
-function renderSpeakers() {
+// renderWillPanel draws the whole left column as ONE divine surface: the panel
+// is titled by the aspect (the Salt/Current/Deep…), shows the Will's utterance,
+// a COMPACT row per speaker (name · directive + order chips — the chips carry
+// the interpretation, so no separate gloss line), then a slim log of town
+// events. Utterance + speaker words live ONLY here now (not echoed elsewhere).
+function renderWillPanel() {
   if (!S.ui.speakers) return;
+  S.ui.speakers.setTitle(S.mask.aspect || 'the Will');
   const lw = S.lastWill;
-  if (!lw || !lw.speakers || !lw.speakers.length) {
-    S.ui.speakers.set('<div class="dim">The speakers await a word.</div>');
-    return;
-  }
-  const utt = lw.utterance
+  const utt = lw && lw.utterance
     ? `<div class="sp-utt">${icon('faith', 'sm')} ${lw.utterance}</div>` : '';
-  const blocks = lw.speakers.map((sp) => `
-    <div class="sp-block">
-      <div class="sp-name">${sp.name || 'a speaker'}</div>
-      <div class="sp-directive">“${sp.directive || ''}”</div>
-      ${sp.word ? `<div class="sp-word">${sp.word}</div>` : ''}
-      <div class="sp-orders">${sp.orders.length
-        ? sp.orders.map((o) => `<span class="ordchip">${orderIcon(o)} ${orderText(o)}</span>`).join('')
-        : '<span class="dim">no work bidden</span>'}</div>
-    </div>`).join('');
-  S.ui.speakers.set(utt + blocks);
+  const speakers = (lw && lw.speakers && lw.speakers.length)
+    ? lw.speakers.map((sp) => `
+      <div class="sp-block">
+        <div class="sp-head"><span class="sp-name">${sp.name || 'a speaker'}</span> <span class="sp-directive">· “${sp.directive || ''}”</span></div>
+        <div class="sp-orders">${sp.orders.length
+          ? sp.orders.map((o) => `<span class="ordchip">${orderIcon(o)} ${orderText(o)}</span>`).join('')
+          : '<span class="dim">no work bidden</span>'}</div>
+      </div>`).join('')
+    : '<div class="dim">The speakers await a word.</div>';
+  const events = (S.chronicle || []).slice(0, 4).map((c) => `<div class="cl ${c.kind}">${c.text}</div>`).join('');
+  const log = events ? `<div class="will-log">${events}</div>` : '';
+  const status = S.willStatus ? `<div class="will-status">${S.willStatus}</div>` : '';
+  S.ui.speakers.set(utt + speakers + log + status);
 }
 
 function pushChronicle(text, kind) {
   S.chronicle.unshift({ text, kind });
   if (S.chronicle.length > 30) S.chronicle.pop();
-  const el = document.getElementById('chronicle');
-  el.innerHTML = S.chronicle.slice(0, 6).map((c) => `<div class="cl ${c.kind}">${c.text}</div>`).join('');
+  renderWillPanel();   // the event log lives inside the unified Will panel now
 }
-function setStewardLine(t) { document.getElementById('stewardline').textContent = t; }
+function setStewardLine(t) { S.willStatus = t; renderWillPanel(); }
 
 // ---- input ----------------------------------------------------------
 function wireKeys() {
