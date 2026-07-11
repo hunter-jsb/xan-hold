@@ -36,24 +36,35 @@ const LOCAL_MS = 6000;          // heuristic steward cadence
 const MAX_PER_TYPE = 8;         // how many of one building we draw
 const ROLE_TINT = {
   villager: 0xffffff, farmer: 0xcfe8a0, woodcutter: 0xbfe0b8,
-  miner: 0xcfcfe0, soldier: 0x9fb8ea, trader: 0xffdf9a, speaker: 0xf3e4c0,
+  miner: 0xcfcfe0, soldier: 0x9fb8ea, trader: 0xffdf9a, speaker: 0xf3e4c0, builder: 0xe0b98a,
 };
 // A saturated pip above the head — the readable role signal (a multiply
 // tint on a brown sprite can't say "blue soldier" clearly; a pip can).
 const ROLE_PIP = {
   villager: 0xe6dcc4, farmer: 0x74c53a, woodcutter: 0x2f8f4e,
-  miner: 0xc9ced6, soldier: 0x4f86e0, trader: 0xf2c14e, speaker: 0xffdf6a,
+  miner: 0xc9ced6, soldier: 0x4f86e0, trader: 0xf2c14e, speaker: 0xffdf6a, builder: 0xd97b3f,
 };
 // Speaker's label is set to the hold's aspect at boot (Saltspeaker, Deepspeaker…).
-const ROLE_LABEL = { villager: 'Villager', farmer: 'Farmer', woodcutter: 'Woodcutter', miner: 'Miner', soldier: 'Soldier', trader: 'Trader', speaker: 'Speaker' };
+const ROLE_LABEL = { villager: 'Villager', farmer: 'Farmer', woodcutter: 'Woodcutter', miner: 'Miner', soldier: 'Soldier', trader: 'Trader', speaker: 'Speaker', builder: 'Builder' };
 // Seconds of work a single unit of each order takes — so decrees are
 // carried out over time (a build you can watch), not the instant they land.
+// 'build' no longer uses its entry (see advanceBuildOrder) — a real building
+// now takes as long as its construction SITE does; kept for the farm/palisade
+// paths, which still finish on this fixed cadence.
 const WORK_S = { build: 5, trade: 2.5, focus: 1, expand: 5, wall: 5 };
+// BUILD_RATE — one builder's share of a construction site's progress per
+// second (see stepVillager's workSite branch): alone, a builder raises a
+// site in ~15s; more builders on the same site split the work, each adding
+// their own share the frame they're working (see nearestSite/pickTarget).
+const BUILD_RATE = 1 / 15;
+const SITE_ALPHA = 0.15;        // a fresh site's starting alpha, before any progress
 
 // ---- state ----------------------------------------------------------
 const S = {
   hold: null, game: null, atlas: null,
-  placed: new Map(),   // typeKey -> {container}
+  placed: new Map(),   // typeKey -> {container} — reserved the moment a site starts, not just when it finishes
+  sites: [],           // construction sites in progress: {key,type,recipe,container,x,y,scaffold,progress,builders,done} — see startSite/finalizeSite
+  siteKeys: new Set(), // S.placed keys an unfinished site still holds (blocks reconcileBuildings' own placement, and excludes them as e.g. a spawn home)
   villagers: [], plots: [], usedPlots: new Set(),
   oreFieldPlots: new Set(), // plot cells the ore field occupies — the plot allocators only (nextCorePlot/nextOuterPlot/nextFarmPlot), not the wall/wander, which read usedPlots
   waterPlots: new Set(), // plot cells water (or a claimed wharf shore tile) occupies — the plot allocators only, mirrors oreFieldPlots
@@ -596,6 +607,19 @@ function placeTownhall() {
   S.hittable.push({ x0: c.x / TILE, y0: c.y / TILE, x1: c.x / TILE + recipe.w, y1: c.y / TILE + recipe.h, label: S.hold.name + ' — the keep' });
 }
 
+// desiredCountFor mirrors desiredCounts()'s per-type formula for a SPECIFIC
+// level (not just the hold's current one) — startSite reads this to check
+// whether the level a build order is about to raise actually warrants a NEW
+// instance, or just deepens one already standing (see startSite).
+function desiredCountFor(type, lv) {
+  if (lv <= 0) return 0;
+  // A mine hut is pinned 1:1 to a real ore node (see nextMineNode) — its
+  // count can't be a coarser proxy for level like the other producers.
+  if (type === 'mine') return Math.min(MAX_PER_TYPE, lv);
+  const b = BY_ID[type];
+  return Math.min(MAX_PER_TYPE, Math.max(1, Math.round(lv / (b && b.kind === 'prod' ? 1.5 : 1))));
+}
+
 // Desired count of each building type from the economy's levels.
 function desiredCounts() {
   const d = {};
@@ -603,16 +627,66 @@ function desiredCounts() {
     if (b.id === 'palisade' || b.id === 'farm') continue; // palisade = wall; farm = drawn from farmPlots
     const lv = S.game.level(b.id);
     if (lv <= 0) continue;
-    // A mine hut is pinned 1:1 to a real ore node (see nextMineNode) — its
-    // count can't be a coarser proxy for level like the other producers.
-    d[b.id] = b.id === 'mine'
-      ? Math.min(MAX_PER_TYPE, lv)
-      : Math.min(MAX_PER_TYPE, Math.max(1, Math.round(lv / (b.kind === 'prod' ? 1.5 : 1))));
+    d[b.id] = desiredCountFor(b.id, lv);
   }
   return d;
 }
 
+// placedCountOf — how many `${type}#k` instances already hold a S.placed
+// key, finished or still a construction site (S.siteKeys reserves theirs the
+// moment they start — see startSite). Keys are always assigned contiguously
+// from 0 (see reconcileBuildings/startSite), so this doubles as "the next
+// free index" for a new instance of `type`.
+function placedCountOf(type) {
+  let n = 0;
+  const prefix = type + '#';
+  for (const k of S.placed.keys()) if (k.startsWith(prefix)) n++;
+  return n;
+}
+
+// allocatePlot picks WHERE a new instance of `type` belongs — the exact
+// per-district routing reconcileBuildings has always used (core/outer/mine/
+// wharf) — pulled out so a construction SITE (startSite) can call the same
+// routing without duplicating it. Returns {plot,cx,cy} in pixels, or null if
+// there's nowhere free for it right now.
+function allocatePlot(type, recipe) {
+  if (type === 'mine') {
+    // A mine isn't a town plot — it's raised directly on an ore vein out
+    // in the field, claiming that node's spot (see placeOreNodes).
+    const node = nextMineNode();
+    if (!node) return null; // the ore field is fully claimed — this mine waits
+    const plot = { tx: Math.round(node.x / TILE - recipe.w / 2), ty: Math.round(node.y / TILE - recipe.h), node };
+    return { plot, cx: plot.tx * TILE, cy: plot.ty * TILE };
+  }
+  if (type === 'wharf') {
+    // Same idea, on the waterfront: claim the next free shore tile
+    // placeWater() found, instead of a town plot (see nextWharfSite).
+    const site = nextWharfSite();
+    if (!site) return null; // no shoreline left (or none at all) — this wharf waits
+    const plot = { tx: Math.round(site.x / TILE - recipe.w / 2), ty: Math.round(site.y / TILE - recipe.h), site };
+    return { plot, cx: plot.tx * TILE, cy: plot.ty * TILE };
+  }
+  if (OUTER_TYPES.has(type)) {
+    // sawmill/quarry/saltern: an outer-ring plot, biased toward their
+    // terrain when one's modeled (see outerBias).
+    const bias = outerBias(type);
+    const plot = nextOuterPlot(bias && bias.x, bias && bias.y);
+    if (!plot) return null;
+    return { plot, cx: plot.tx * TILE + Math.floor((PLOT - recipe.w) / 2) * TILE, cy: (plot.ty + PLOT - recipe.h) * TILE };
+  }
+  // CORE_TYPES: dwellings/stores/faith/command — a plot inside the walled
+  // core zone (see nextCorePlot/coreRadius).
+  const plot = nextCorePlot();
+  if (!plot) return null;
+  return { plot, cx: plot.tx * TILE + Math.floor((PLOT - recipe.w) / 2) * TILE, cy: (plot.ty + PLOT - recipe.h) * TILE };
+}
+
 // Reconcile placed structures toward the desired counts (grow the town).
+// This still exists for boot/catch-up: a hold's starting levels (a farm-tier
+// wharf/saltern, or an old save) need to appear instantly, with no order or
+// site behind them. Going forward, an actual `build` ORDER reserves its key
+// via startSite before this ever sees it (S.placed.has(key) is already true),
+// so this loop no longer duplicates a site in progress.
 function reconcileBuildings() {
   const want = desiredCounts();
   for (const [type, n] of Object.entries(want)) {
@@ -620,37 +694,9 @@ function reconcileBuildings() {
       const key = `${type}#${k}`;
       if (S.placed.has(key)) continue;
       const { recipe, prop } = recipeFor(type);
-      let plot, cx, cy;
-      if (type === 'mine') {
-        // A mine isn't a town plot — it's raised directly on an ore vein out
-        // in the field, claiming that node's spot (see placeOreNodes).
-        const node = nextMineNode();
-        if (!node) break; // the ore field is fully claimed — this mine waits
-        plot = { tx: Math.round(node.x / TILE - recipe.w / 2), ty: Math.round(node.y / TILE - recipe.h), node };
-        cx = plot.tx * TILE; cy = plot.ty * TILE;
-      } else if (type === 'wharf') {
-        // Same idea, on the waterfront: claim the next free shore tile
-        // placeWater() found, instead of a town plot (see nextWharfSite).
-        const site = nextWharfSite();
-        if (!site) break; // no shoreline left (or none at all) — this wharf waits
-        plot = { tx: Math.round(site.x / TILE - recipe.w / 2), ty: Math.round(site.y / TILE - recipe.h), site };
-        cx = plot.tx * TILE; cy = plot.ty * TILE;
-      } else if (OUTER_TYPES.has(type)) {
-        // sawmill/quarry/saltern: an outer-ring plot, biased toward their
-        // terrain when one's modeled (see outerBias).
-        const bias = outerBias(type);
-        plot = nextOuterPlot(bias && bias.x, bias && bias.y);
-        if (!plot) return;
-        cx = plot.tx * TILE + Math.floor((PLOT - recipe.w) / 2) * TILE;
-        cy = (plot.ty + PLOT - recipe.h) * TILE;
-      } else {
-        // CORE_TYPES: dwellings/stores/faith/command — a plot inside the
-        // walled core zone (see nextCorePlot/coreRadius).
-        plot = nextCorePlot();
-        if (!plot) return;
-        cx = plot.tx * TILE + Math.floor((PLOT - recipe.w) / 2) * TILE;
-        cy = (plot.ty + PLOT - recipe.h) * TILE;
-      }
+      const alloc = allocatePlot(type, recipe);
+      if (!alloc) { if (type === 'mine' || type === 'wharf') break; else return; }
+      const { plot, cx, cy } = alloc;
       const c = makeBuildingContainer(recipe, prop);
       c.x = cx; c.y = cy;
       if (type === 'farm') {
@@ -1114,6 +1160,108 @@ function renderWalls() {
   }
 }
 
+// ---- construction sites (builders) -----------------------------------
+// A `build` order (see advanceBuildOrder) no longer finishes instantly: it
+// allocates a plot (allocatePlot, same routing reconcileBuildings uses),
+// pays the cost up front, and raises a low-alpha site that idle BUILDER
+// villagers walk to and work — like a woodcutter's tree or a miner's vein,
+// but shared (any number of builders may work the same site at once) and
+// continuous (progress rises every frame a builder's on it, not a one-shot
+// timer — see stepVillager's workSite branch). S.sites holds every site not
+// yet finished; S.siteKeys is the S.placed keys they're reserving meanwhile.
+
+// makeScaffold lays a bare-earth foundation patch (on the ground layer, so
+// it never fights the rising building's own z-order) under a fresh site —
+// a "something's being built here" tell independent of the sprite's own low
+// alpha, which can be hard to read against grass this faint.
+function makeScaffold(recipe, cx, cy) {
+  const g = new Container();
+  const dirt = S.atlas.ground.dirt;
+  for (let ty = 0; ty < recipe.h; ty++) for (let tx = 0; tx < recipe.w; tx++) {
+    const s = new Sprite(dirt[(tx + ty) % dirt.length]);
+    s.x = cx + tx * TILE; s.y = cy + ty * TILE;
+    g.addChild(s);
+  }
+  ground.addChild(g);
+  return g;
+}
+
+// startSite performs REAL construction for a non-farm `build` order whose
+// cost is already confirmed affordable (see advanceBuildOrder): find where
+// it belongs (allocatePlot), pay + raise the level (S.game.build — the same
+// call as before, bookkeeping unchanged), and raise a low-alpha site over a
+// scaffold for builders to work.
+//
+// Not every build order needs a NEW instance, though: desiredCounts() only
+// adds one roughly every 1.5 levels for a producer (a flat per-vein cap for
+// a mine) — an "in-between" order just deepens a building already standing,
+// exactly as it did before sites existed, with no new plot and no site.
+// Returns a site record, the string 'instant' for a pure deepen, or null if
+// there's nowhere to put a NEW instance right now (the district's full) —
+// the caller just waits and retries; no plot/vein/shore is ever touched
+// until we're sure this order will actually use it.
+function startSite(type) {
+  const lv = S.game.level(type);
+  if (desiredCountFor(type, lv + 1) <= placedCountOf(type)) {
+    return S.game.build(type) ? 'instant' : null;
+  }
+  const { recipe, prop } = recipeFor(type);
+  const alloc = allocatePlot(type, recipe);
+  if (!alloc) return null;
+  S.game.build(type);
+  const { plot, cx, cy } = alloc;
+  const key = `${type}#${placedCountOf(type)}`; // keys are contiguous from 0 — this IS the next free slot
+  const c = makeBuildingContainer(recipe, prop);
+  c.x = cx; c.y = cy; c.zIndex = c.y + recipe.h * TILE; c.alpha = SITE_ALPHA;
+  entities.addChild(c);
+  const site = {
+    key, type, recipe, container: c,
+    x: cx + recipe.w * TILE / 2, y: cy + recipe.h * TILE, // the footprint's base point — sparks, poof, and where builders stand
+    scaffold: makeScaffold(recipe, cx, cy),
+    progress: 0, builders: new Set(), done: false,
+  };
+  S.placed.set(key, { container: c, plot }); // reserved now — reconcileBuildings won't touch this key again
+  S.siteKeys.add(key);
+  S.sites.push(site);
+  return site;
+}
+
+// finalizeSite completes a site: full alpha, registered in S.hittable
+// exactly as reconcileBuildings does for an instant build, the scaffold
+// cleared, a construction poof, and every builder on it released (idle →
+// pickTarget next frame). Guarded against double-finalize — two builders
+// can both cross progress 1.0 in the same frame (see stepVillager).
+function finalizeSite(site) {
+  if (site.done) return;
+  site.done = true;
+  const c = site.container, r = site.recipe;
+  c.alpha = 1;
+  S.hittable.push({ x0: c.x / TILE, y0: c.y / TILE, x1: c.x / TILE + r.w, y1: c.y / TILE + r.h, type: site.type });
+  S.siteKeys.delete(site.key);
+  const i = S.sites.indexOf(site);
+  if (i >= 0) S.sites.splice(i, 1);
+  if (site.scaffold) { ground.removeChild(site.scaffold); site.scaffold.destroy({ children: true }); }
+  constructionPoof(site.x, site.y);
+  for (const v of site.builders) { v.workSite = null; v.working = false; v.idle = 0; } // off to the next site, or wander
+  site.builders.clear();
+}
+
+// nearestSite — an idle builder's pick: sites with NO builders yet come
+// first (spreading hands across every site rather than piling onto one), the
+// nearest such site if there's a choice; once every site already has a
+// builder, sharing is fine — fall back to the nearest site overall rather
+// than leaving a builder idle.
+function nearestSite(px, py) {
+  let bestEmpty = null, bdEmpty = Infinity, bestAny = null, bdAny = Infinity;
+  for (const s of S.sites) {
+    if (s.done) continue;
+    const d = (s.x - px) ** 2 + (s.y - py) ** 2;
+    if (d < bdAny) { bdAny = d; bestAny = s; }
+    if (s.builders.size === 0 && d < bdEmpty) { bdEmpty = d; bestEmpty = s; }
+  }
+  return bestEmpty || bestAny;
+}
+
 // ---- villagers ------------------------------------------------------
 function roleWeights() {
   const g = S.game, w = { villager: 1 };
@@ -1121,6 +1269,9 @@ function roleWeights() {
   w.woodcutter = g.level('sawmill');
   w.miner = g.level('mine') + g.level('quarry');
   w.trader = g.level('market');
+  // A baseline so building never fully stalls for want of hands; more sites
+  // awaiting builders pulls a bigger share of the folk onto the work.
+  w.builder = 1 + S.sites.length * 4;
   w.soldier = g.defense() * 2 + (isRaided() ? 3 : 0);
   w.speaker = 1 + g.level('reliquary') * 2; // always at least one; reliquaries raise more
   return Object.entries(w).filter(([, v]) => v > 0);
@@ -1178,7 +1329,9 @@ function randomTownPoint() {
 // little; fall back to the keep's centre if none is built yet.
 function homeSpawnPoint() {
   const homes = [];
-  for (const [k, rec] of S.placed) if (k.startsWith('longhouse#') && rec.plot && rec.plot.px != null) homes.push(rec.plot);
+  // A longhouse still under construction (S.siteKeys) isn't home yet — folk
+  // shouldn't spawn out of an empty foundation.
+  for (const [k, rec] of S.placed) if (k.startsWith('longhouse#') && !S.siteKeys.has(k) && rec.plot && rec.plot.px != null) homes.push(rec.plot);
   if (!homes.length) return { x: CENTER_TX * TILE, y: CENTER_TY * TILE };
   const p = homes[(Math.random() * homes.length) | 0];
   const c = plotCenterPx(p.px, p.py);
@@ -1187,9 +1340,13 @@ function homeSpawnPoint() {
 
 // A worker holds a claim on the single exhaustible node (a tree) it's walking
 // to or toiling — release it so no other woodcutter targets the same trunk.
+// A builder's claim on a construction site works the same way, except it's
+// not exclusive (site.builders is a Set — see nearestSite/finalizeSite).
 function releaseClaim(v) {
   const n = v.workNode || v.targetNode;
   if (n && n.claimedBy === v) n.claimedBy = null;
+  const s = v.workSite || v.targetSite;
+  if (s && s.builders) s.builders.delete(v);
 }
 
 // ---- pathing (route around walls, through gates) ---------------------
@@ -1250,6 +1407,17 @@ function pickTarget(v) {
     // rush the settlement's wall (near the town centre), not the far map edge
     const a = Math.random() * Math.PI * 2;
     goTo(v, (CENTER_TX + Math.cos(a) * 13) * TILE, (CENTER_TY + Math.sin(a) * 11) * TILE);
+    return;
+  }
+  // Builders make the same kind of work trip as a miner/woodcutter, just to
+  // a construction site instead of a resource node (see nearestSite) — and
+  // unlike a tree/vein, several builders may share one (site.builders is a
+  // Set, not a single claimedBy).
+  if (v.role === 'builder') {
+    releaseClaim(v);
+    const site = nearestSite(v.x, v.y);
+    if (site) { v.targetSite = site; site.builders.add(v); goTo(v, site.x, site.y); }
+    else { v.targetSite = null; const t = randomTownPoint(); goTo(v, t.x, t.y); }
     return;
   }
   // Miners and woodcutters make work trips: out to a node, then home to
@@ -1429,6 +1597,16 @@ function scheduleRegrow() {
 
 function stepVillager(v, dt) {
   if (!v.moving) {
+    if (v.workSite) {                  // a builder toiling a site — continuous progress, not a fixed timer
+      const site = v.workSite;
+      if (site.done) { v.workSite = null; v.working = false; pickTarget(v); return; } // someone else finished it first
+      site.progress = Math.min(1, site.progress + BUILD_RATE * dt); // more builders on it → more calls like this one each frame → faster
+      site.container.alpha = site.progress;
+      v.idle -= dt;
+      if (v.idle <= 0) { workEffect(site); v.idle = 0.6 + Math.random() * 0.8; } // periodic sparks, purely cosmetic
+      if (site.progress >= 1) finalizeSite(site);
+      return;
+    }
     v.idle -= dt;
     if (v.idle <= 0) {
       if (v.working) {                 // finished toiling the node — haul the goods home
@@ -1447,7 +1625,7 @@ function stepVillager(v, dt) {
   const wp = v.path[0];                // walk toward the next cached waypoint, not straight at v.tx/v.ty
   const dx = wp.x - v.x, dy = wp.y - v.y;
   const dist = Math.hypot(dx, dy);
-  const worker = !!CARRY[v.role];
+  const worker = !!CARRY[v.role] || v.role === 'builder';
   const speed = (v.role === 'soldier' && isRaided() ? 34 : worker ? 24 : 18) * dt;
   if (dist < speed) {
     v.x = wp.x; v.y = wp.y; v.zIndex = v.y;
@@ -1459,6 +1637,10 @@ function stepVillager(v, dt) {
       const cfg = CARRY[v.role];
       v.idle = cfg.workMin + Math.random() * cfg.workRange;
       workEffect(v.workNode);
+    } else if (v.targetSite) {         // reached the construction site — start toiling (or it's already done)
+      const site = v.targetSite; v.targetSite = null;
+      if (site.done) { v.idle = 0; }
+      else { v.working = true; v.workSite = site; v.idle = 0.6 + Math.random() * 0.8; }
     } else {                           // arrived home / at the mill, or just wandering
       if (v.hauling) deliverCommodity(v);
       v.idle = 0.8 + Math.random() * 2.5;
@@ -1739,7 +1921,54 @@ function executeOrders(dt) {
   trimOrderLog();
 }
 
+// advanceBuildOrder drives a real (non-farm) `build` order through the
+// construction-site pipeline: mine/wharf's placement gate is checked once,
+// outright (a vein/shoreline that's genuinely exhausted never resolves, so
+// this fails the order rather than idling forever, same as before sites
+// existed); otherwise it waits on affordability (autoFund, the same 16s
+// grace every other order type gets) before calling startSite, which pays
+// and sites it (or reports a plain level-deepen, or that there's nowhere to
+// put a NEW instance yet — that last case just waits, no timeout, since a
+// full core/outer district resolves on its own as the town grows). Once
+// sited, the order's progress bar mirrors the site's real construction
+// (a.progress = a.site.progress) until the site finishes.
+function advanceBuildOrder(a, dt) {
+  if (a.site) {
+    a.progress = a.site.progress;
+    if (a.site.done) {
+      a.site = null; a.qtyLeft -= 1; a.waited = 0;
+      if (a.qtyLeft <= 0) { a.status = 'done'; a.doneAt = Date.now(); a.progress = 1; }
+      else a.progress = 0; // more of this type ordered (qty>1) — the next tick breaks ground on another
+    }
+    return;
+  }
+  if (a.target === 'mine' && !mineNodeAvailable()) { a.status = 'skipped'; a.doneAt = Date.now(); return; }
+  if (a.target === 'wharf' && !wharfSiteAvailable()) { a.status = 'skipped'; a.doneAt = Date.now(); return; }
+  if (!S.game.canAfford(a.target)) {
+    autoFund(a.target); a.waited += dt;
+    if (a.waited > 16) { a.status = 'skipped'; a.doneAt = Date.now(); }
+    return;
+  }
+  a.waited = 0; // affordable — any further wait from here is about siting, not money
+  const result = startSite(a.target);
+  if (!result) return; // the district's momentarily full — wait quietly, retry next tick
+  if (result === 'instant') {          // a deeper level of a building already standing — nothing to construct
+    a.qtyLeft -= 1;
+    if (a.qtyLeft <= 0) { a.status = 'done'; a.doneAt = Date.now(); a.progress = 1; }
+    else a.progress = 0;
+    return;
+  }
+  a.site = result; a.progress = 0;     // a real new instance — track its construction from here
+}
+
 function advanceOrder(a, dt) {
+  // A real building's `build` order runs through the construction-site
+  // pipeline instead of the fixed work-bar timer below — its progress IS a
+  // site's real progress (see advanceBuildOrder), which is why it's split
+  // out before the generic `a.progress += dt/WORK_S` gate even runs. A new
+  // farm stays on the old timer (see step 5 of the builders work — farms are
+  // their own field, not a district building, and fold in fine as-is).
+  if (a.type === 'build' && a.target !== 'farm') { advanceBuildOrder(a, dt); return; }
   a.progress += dt / (WORK_S[a.type] || 3);
   if (a.progress < 1) return;
   if (a.type === 'focus') { S.focus = a.value || a.target || null; a.qtyLeft = 0; }
@@ -1748,19 +1977,12 @@ function advanceOrder(a, dt) {
     if (a.action === 'sell') S.game.sell(a.resource, q); else S.game.buy(a.resource, q);
     a.qtyLeft = 0;
   } else if (a.type === 'build') {
-    // A mine can only rise on an ore vein — if the field has none free (and
-    // the town isn't already past its drawn-instance cap), the order can't
-    // be fulfilled; fail it outright rather than spend resources on a mine
-    // with nowhere to stand. This is the town-side "correct placement"
-    // resolution for any `build mine` order, however it was raised.
-    if (a.target === 'mine' && !mineNodeAvailable()) { a.status = 'skipped'; a.doneAt = Date.now(); return; }
-    // Same idea for a wharf — no shoreline left to build it on (see placeWater).
-    if (a.target === 'wharf' && !wharfSiteAvailable()) { a.status = 'skipped'; a.doneAt = Date.now(); return; }
-    // A new farm is its own field (with a crop); other builds raise a level.
-    const ok = a.target === 'farm' ? S.game.newFarm(a.crop) : S.game.build(a.target);
+    // Only 'farm' reaches here now (see the dispatch above) — its own field,
+    // built instantly as before; a real building goes through advanceBuildOrder.
+    const ok = S.game.newFarm(a.crop);
     if (ok) { a.qtyLeft -= 1; a.waited = 0; }
     else {                       // can't afford — try to fund it; give up after a while
-      autoFund(a.target); a.progress = 1; a.waited += dt;
+      autoFund('farm'); a.progress = 1; a.waited += dt;
       if (a.waited > 16) { a.status = 'skipped'; a.doneAt = Date.now(); }
       return;                    // (other crews keep working in parallel)
     }
