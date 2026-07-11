@@ -70,6 +70,8 @@ const S = {
   waterPlots: new Set(), // plot cells water (or a claimed wharf shore tile) occupies — the plot allocators only, mirrors oreFieldPlots
   oreFieldCenter: null, // {x,y} px — set by placeOreNodes; read by outerBias (quarry) + farmlandAnchor
   farmAnchor: null, // {px,py} plot coords — the farmland district's centre, set once by farmlandAnchor
+  farmDistrict: null, // the ONE Container every farm tile sprite lives in — see renderFarmDistrict
+  farmTiles: new Map(), // "tx,ty" -> Sprite, so a re-render retextures in place instead of rebuilding
   orderLog: [], focus: null, chronicle: [],
   stewardBusy: false, lastRaidTally: 0, alarm: 0,
   hudOn: true, ui: { pinned: new Set() }, // ui.pinned: category keys clicked open (see chip() in updateHUD)
@@ -739,39 +741,113 @@ function reconcileBuildings() {
 // Farms are individual fields (game.farmPlots), each with a size and crop.
 // They render from farmPlots — a new farm adds a field, expansion regrows one
 // bigger with fuller crops — separate from the level-driven building counts.
+// Only S.placed's bookkeeping (plot/size/crop per field) happens here; the
+// actual pixels are the WHOLE farmland district, redrawn by renderFarmDistrict
+// below so adjacent fields' borders autotile against each other instead of
+// each field drawing its own independent 9-slice (the old doubled-seam bug).
 function reconcileFarms() {
   const plots = S.game.farmPlots || [];
+  let changed = false;
   for (let i = 0; i < plots.length; i++) {
     const fp = plots[i], key = `farm#${i}`;
     const ex = S.placed.get(key);
-    if (ex && ex.size === fp.size) continue;   // already drawn at this size
-    const plot = ex ? ex.plot : nextFarmPlot(); // new fields cluster into the farmland district — see nextFarmPlot
-    if (!plot) return;
-    if (ex) { ground.removeChild(ex.container); ex.container.destroy({ children: true }); S.hittable = S.hittable.filter((h) => h.key !== key); }
-    const c = makeFarmField(fp);
-    c.x = plot.tx * TILE; c.y = plot.ty * TILE;
-    ground.addChild(c);
-    if (!ex) { c.alpha = 0; fadeIn(c); }
-    else if (S.booted) constructionPoof(c.x + c._n * TILE / 2, c.y + c._n * TILE); // a poof as it grows
-    S.placed.set(key, { container: c, plot, size: fp.size });
-    S.hittable.push({ key, x0: c.x / TILE, y0: c.y / TILE, x1: c.x / TILE + c._n, y1: c.y / TILE + c._n, type: 'farm' });
+    if (ex && ex.size === fp.size) continue;    // already drawn at this size
+    const plot = ex ? ex.plot : nextFarmPlot();  // new fields cluster into the farmland district — see nextFarmPlot
+    if (!plot) break; // out of room this tick — render whatever DID change below; the rest retries next tick
+    if (ex && S.booted) { // an existing field grew in place — poof, no fade (see renderFarmDistrict)
+      const n = 2 + fp.size;
+      constructionPoof((plot.tx + n / 2) * TILE, (plot.ty + n) * TILE);
+    }
+    S.placed.set(key, { plot, size: fp.size, crop: fp.crop });
+    changed = true;
+  }
+  if (changed) renderFarmDistrict();
+}
+
+// renderFarmDistrict redraws the farmland district as ONE autotiled region:
+// the union of every placed field's tiles (farmUnionTiles), each tile's
+// texture picked from farmTileTex against its neighbors IN THE UNION, not
+// from its own field alone — a farm tile touching another farm tile gets no
+// grass on that side, so two adjacent fields share one border/corner instead
+// of each drawing its own (the T/cross junctions the district needs). A lone
+// field has no farm neighbors anywhere, so every one of its border tiles
+// still opens onto grass exactly as before — this reduces to the old
+// per-field 9-slice with nothing next to it.
+// Rebuilt from scratch on every change (cheap — a handful of fields, a few
+// tiles each), but existing tile sprites are reused in place (retextured, not
+// destroyed) so a shared border flipping from grass-edge to interior doesn't
+// refade — only genuinely NEW ground (a brand new field, or growth into
+// fresh tiles) fades in.
+function renderFarmDistrict() {
+  const tiles = farmUnionTiles();
+  if (!S.farmDistrict) { S.farmDistrict = new Container(); ground.addChild(S.farmDistrict); }
+  for (const [k, sp] of S.farmTiles) {
+    if (tiles.has(k)) continue;
+    S.farmDistrict.removeChild(sp); sp.destroy(); S.farmTiles.delete(k); // a field shrank/moved — shouldn't happen, but stay correct
+  }
+  for (const [k, { crop }] of tiles) {
+    const [tx, ty] = k.split(',').map(Number);
+    const tex = farmTileTex(tiles, tx, ty, crop);
+    let sp = S.farmTiles.get(k);
+    if (sp) { sp.texture = tex; continue; }
+    sp = new Sprite(tex); sp.x = tx * TILE; sp.y = ty * TILE; sp.alpha = 0;
+    S.farmDistrict.addChild(sp); S.farmTiles.set(k, sp); fadeIn(sp);
+  }
+  // S.hittable's farm entries are rebuilt fresh every render (cheap, and a
+  // handful of fields) rather than patched — keeps each field's own hover
+  // box ("Farm · lvl N") and click region correct with no container to key
+  // off of (there's no more one-container-per-field).
+  S.hittable = S.hittable.filter((h) => h.type !== 'farm');
+  for (const [key, rec] of S.placed) {
+    if (!key.startsWith('farm#')) continue;
+    const n = 2 + rec.size;
+    S.hittable.push({ key, x0: rec.plot.tx, y0: rec.plot.ty, x1: rec.plot.tx + n, y1: rec.plot.ty + n, type: 'farm' });
   }
 }
 
-// makeFarmField — a grass-edged tilled field (Kenney 9-slice border) whose
-// interior fills with the plot's crop; footprint grows with size.
-function makeFarmField(fp) {
-  const n = 2 + fp.size; // size1→3x3, size2→4x4, size3→5x5
-  const c = new Container();
-  const cropTex = S.atlas.crops[fp.crop] || S.atlas.crops.greens;
-  for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
-    const ex = x === 0 ? -1 : x === n - 1 ? 1 : 0;
-    const ey = y === 0 ? -1 : y === n - 1 ? 1 : 0;
-    const tex = (ex === 0 && ey === 0) ? cropTex : S.atlas.farmDirt[`${ey},${ex}`];
-    const s = new Sprite(tex); s.x = x * TILE; s.y = y * TILE; c.addChild(s);
+// farmUnionTiles is the union of every placed field's footprint, in world
+// tile coords: "tx,ty" -> { crop } (which field's crop fills that cell —
+// matters only for the rare 1-tile overlap between differently-sized fields
+// sharing the same PLOT grid, where the later field in S.placed wins).
+function farmUnionTiles() {
+  const tiles = new Map();
+  for (const [key, rec] of S.placed) {
+    if (!key.startsWith('farm#')) continue;
+    const n = 2 + rec.size; // size1→3x3, size2→4x4, size3→5x5
+    for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
+      tiles.set(`${rec.plot.tx + x},${rec.plot.ty + y}`, { crop: rec.crop });
+    }
   }
-  c._n = n;
-  return c;
+  return tiles;
+}
+
+// farmTileTex autotiles a single farm tile against the WHOLE district union:
+// a farm neighbor on a side means no grass faces that way (interior/crop
+// keeps going), so two adjacent fields share one border instead of each
+// drawing its own — outer corners fall out of two open sides at once, same
+// as the old per-field 9-slice. Where fields of different sizes step against
+// each other you get a CONCAVE (inner-corner) junction instead: all 4
+// cardinal sides closed (farm) but a diagonal neighbor open (grass). Tiny
+// Town's grass-dirt set is a plain 9-slice — 4 outer corners + 4 edges + a
+// centre — with no inner-corner tile to reach for (checked the whole atlas:
+// nothing else in it draws a concave grass/dirt cut either). Approximated as
+// plain interior: the grass at that notch is already the ordinary ground
+// tile just outside the union (see paintGround), so this tile — bordered by
+// farm on every cardinal side — is correctly interior too, just with a
+// squared-off corner where a rounded cut isn't available.
+function farmTileTex(tiles, tx, ty, crop) {
+  const has = (x, y) => tiles.has(`${x},${y}`);
+  const openN = !has(tx, ty - 1), openS = !has(tx, ty + 1), openE = !has(tx + 1, ty), openW = !has(tx - 1, ty);
+  let ex = 0, ey = 0;
+  if (openN && openW) { ex = -1; ey = -1; }
+  else if (openN && openE) { ex = 1; ey = -1; }
+  else if (openS && openW) { ex = -1; ey = 1; }
+  else if (openS && openE) { ex = 1; ey = 1; }
+  else if (openN) ey = -1;
+  else if (openS) ey = 1;
+  else if (openW) ex = -1;
+  else if (openE) ex = 1;
+  return (ex === 0 && ey === 0) ? (S.atlas.crops[crop] || S.atlas.crops.greens) : S.atlas.farmDirt[`${ey},${ex}`];
 }
 
 // placeOreNodes drops an ore field into the wilderness — a rocky patch with
