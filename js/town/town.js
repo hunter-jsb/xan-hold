@@ -780,32 +780,21 @@ function reconcileFarms() {
 // fresh tiles) fades in.
 function renderFarmDistrict() {
   if (!S.farmDistrict) { S.farmDistrict = new Container(); ground.addChild(S.farmDistrict); }
-  // Each field draws its OWN complete grass-edged 9-slice border. The Tiny Town
-  // set has no inner/concave-corner tile, so cross-field autotiling left
-  // borderless glitches wherever fields of different sizes stepped against each
-  // other — a per-field border is always clean; two adjacent fields just show a
-  // seam, which reads fine as separate plots. Keyed "farm#i:tx,ty" so a shared
-  // edge draws both fields' borders (the seam) rather than collapsing.
-  const wanted = new Map();
-  for (const [key, rec] of S.placed) {
-    if (!key.startsWith('farm#')) continue;
-    const n = 2 + rec.size; // size1→3x3, size2→4x4, size3→5x5
-    const cropTex = S.atlas.crops[rec.crop] || S.atlas.crops.greens;
-    for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
-      const ex = x === 0 ? -1 : x === n - 1 ? 1 : 0;
-      const ey = y === 0 ? -1 : y === n - 1 ? 1 : 0;
-      const tex = (ex === 0 && ey === 0) ? cropTex : S.atlas.farmDirt[`${ey},${ex}`];
-      wanted.set(`${key}:${rec.plot.tx + x},${rec.plot.ty + y}`, { tex, wx: rec.plot.tx + x, wy: rec.plot.ty + y });
-    }
-  }
+  // Autotile the whole farmland as ONE union: adjacent fields merge into a
+  // single tilled shape with grass only on the outer perimeter — clean T/cross
+  // junctions, no doubled seams. Concave corners at size-steps now resolve too,
+  // thanks to the generated inner-corner tiles (farmTileTex / `in:` in atlas).
+  const tiles = farmUnionTiles();               // "tx,ty" -> { crop }
   for (const [k, sp] of S.farmTiles) {
-    if (wanted.has(k)) continue;
+    if (tiles.has(k)) continue;
     S.farmDistrict.removeChild(sp); sp.destroy(); S.farmTiles.delete(k);
   }
-  for (const [k, { tex, wx, wy }] of wanted) {
+  for (const [k, { crop }] of tiles) {
+    const [tx, ty] = k.split(',').map(Number);
+    const tex = farmTileTex(tiles, tx, ty, crop);
     let sp = S.farmTiles.get(k);
     if (sp) { sp.texture = tex; continue; }
-    sp = new Sprite(tex); sp.x = wx * TILE; sp.y = wy * TILE; sp.alpha = 0;
+    sp = new Sprite(tex); sp.x = tx * TILE; sp.y = ty * TILE; sp.alpha = 0;
     S.farmDistrict.addChild(sp); S.farmTiles.set(k, sp); fadeIn(sp);
   }
   // S.hittable's farm entries are rebuilt fresh every render (cheap, and a
@@ -862,7 +851,16 @@ function farmTileTex(tiles, tx, ty, crop) {
   else if (openS) ey = 1;
   else if (openW) ex = -1;
   else if (openE) ex = 1;
-  return (ex === 0 && ey === 0) ? (S.atlas.crops[crop] || S.atlas.crops.greens) : S.atlas.farmDirt[`${ey},${ex}`];
+  if (ex === 0 && ey === 0) {
+    // Interior — but a CONCAVE junction (both cardinals of a corner are farm
+    // while the diagonal is open) needs a grass nub tucked into that corner
+    // (generated inner-corner tile), else the border breaks at the step.
+    for (const [dy, dx] of [[-1, -1], [-1, 1], [1, -1], [1, 1]]) {
+      if (!has(tx + dx, ty + dy) && has(tx + dx, ty) && has(tx, ty + dy)) return S.atlas.farmDirt[`in:${dy},${dx}`];
+    }
+    return S.atlas.crops[crop] || S.atlas.crops.greens;
+  }
+  return S.atlas.farmDirt[`${ey},${ex}`];
 }
 
 // ORE_KINDS — the tier/rarity table placeOreNodes rolls against. Each entry

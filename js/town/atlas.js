@@ -155,6 +155,15 @@ export async function loadAtlas() {
     '0,-1': tex(24), '0,0': tex(25), '0,1': tex(26),
     '1,-1': tex(36), '1,0': tex(37), '1,1': tex(38),
   };
+  // Generated INNER (concave) corners — Tiny Town's grass-dirt 9-slice has none,
+  // so we composited a dirt tile + a grass nub per diagonal (build script in the
+  // repo). Keyed `in:${dy},${dx}` = grass tucked into that corner, so the
+  // farmland autotile turns a concave junction cleanly instead of glitching.
+  const innerSheet = await Assets.load('/assets/tiles/farm-inner-corners.png');
+  innerSheet.source.scaleMode = 'nearest';
+  ['-1,-1', '-1,1', '1,-1', '1,1'].forEach((k, i) => {
+    farmDirt[`in:${k}`] = new Texture({ source: innerSheet.source, frame: new Rectangle(i * TILE, 0, TILE, TILE) });
+  });
 
   // Water (ArMM overworld, CC0) — a calm ripple fill for lakes/coast, a
   // diagonal-streak flow fill for rivers, and one foam shore-edge tile.
