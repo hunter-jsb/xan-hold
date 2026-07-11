@@ -1332,6 +1332,7 @@ function makeScaffold(recipe, cx, cy) {
 // the caller just waits and retries; no plot/vein/shore is ever touched
 // until we're sure this order will actually use it.
 function startSite(type) {
+  if (type === 'farm') return startFarmSite(); // a field, not a recipe/plot building — its own site path
   const lv = S.game.level(type);
   if (desiredCountFor(type, lv + 1) <= placedCountOf(type)) {
     return S.game.build(type) ? 'instant' : null;
@@ -1362,9 +1363,44 @@ function startSite(type) {
 // cleared, a construction poof, and every builder on it released (idle →
 // pickTarget next frame). Guarded against double-finalize — two builders
 // can both cross progress 1.0 in the same frame (see stepVillager).
+// startFarmSite breaks ground on a NEW farm field: reserve a plot in the
+// farmland district + pay now, and raise a bare-earth scaffold that builders
+// must till (its alpha climbs with progress) before the field itself appears
+// in finalizeSite's farm branch. A field is game.farmPlots, not a recipe/plot
+// building, so it gets its own site path rather than startSite's machinery.
+function startFarmSite() {
+  const plot = nextFarmPlot();
+  if (!plot) return null;                        // district momentarily full — wait, retry next tick
+  if (!S.game.build('farm')) { S.usedPlots.delete(`${plot.px},${plot.py}`); return null; } // pay + raise level (afford already checked)
+  const n = 3;                                   // a fresh field is size 1 → 3x3
+  const cx = plot.tx * TILE, cy = plot.ty * TILE;
+  const scaffold = makeScaffold({ w: n, h: n }, cx, cy);
+  scaffold.alpha = SITE_ALPHA;                   // fades in as builders till (workSite sets container.alpha = progress)
+  const site = {
+    key: `farm-site-${S.farmSiteSeq = (S.farmSiteSeq || 0) + 1}`,
+    type: 'farm', plot, container: scaffold,
+    x: cx + n * TILE / 2, y: cy + n * TILE,       // where builders stand / the poof fires
+    progress: 0, builders: new Set(), done: false,
+  };
+  S.sites.push(site);
+  return site;
+}
+
 function finalizeSite(site) {
   if (site.done) return;
   site.done = true;
+  if (site.type === 'farm') {                    // a tilled field, not a building
+    const plots = S.game.farmPlots, idx = plots.length, crops = ['greens', 'grain', 'roots'];
+    plots.push({ size: 1, crop: crops[idx % 3] });
+    S.placed.set(`farm#${idx}`, { plot: site.plot, size: 1, crop: crops[idx % 3] }); // reserved plot → reconcileFarms draws it HERE
+    renderFarmDistrict();
+    if (site.container) { ground.removeChild(site.container); site.container.destroy({ children: true }); }
+    constructionPoof(site.x, site.y);
+    const fi = S.sites.indexOf(site); if (fi >= 0) S.sites.splice(fi, 1);
+    for (const v of site.builders) { v.workSite = null; v.working = false; v.idle = 0; }
+    site.builders.clear();
+    return;
+  }
   const c = site.container, r = site.recipe;
   c.alpha = 1;
   S.hittable.push({ x0: c.x / TILE, y0: c.y / TILE, x1: c.x / TILE + r.w, y1: c.y / TILE + r.h, type: site.type });
@@ -2098,9 +2134,10 @@ function advanceOrder(a, dt) {
   // pipeline instead of the fixed work-bar timer below — its progress IS a
   // site's real progress (see advanceBuildOrder), which is why it's split
   // out before the generic `a.progress += dt/WORK_S` gate even runs. A new
-  // farm stays on the old timer (see step 5 of the builders work — farms are
-  // their own field, not a district building, and fold in fine as-is).
-  if (a.type === 'build' && a.target !== 'farm') { advanceBuildOrder(a, dt); return; }
+  // FARM now breaks ground as a construction site too (startSite → startFarmSite):
+  // builders must reach and till it before the field appears. Only `expand`
+  // stays instant for now.
+  if (a.type === 'build') { advanceBuildOrder(a, dt); return; }
   a.progress += dt / (WORK_S[a.type] || 3);
   if (a.progress < 1) return;
   if (a.type === 'focus') { S.focus = a.value || a.target || null; a.qtyLeft = 0; }
