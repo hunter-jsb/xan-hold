@@ -46,6 +46,8 @@ const RECIPES = {
   // The reliquary is a whole-image sprite (a church), not tiles. w drives its
   // on-screen size (scale = w*TILE / image width) — 2 = about half of 4.
   reliquary: { w: 2, h: 3, image: 'church' },
+  // The barracks is an animated sprite — 4 frames, martial aesthetics.
+  barracks: { w: 3, h: 3, anim: 'barracks' },
 };
 
 // A trade prop set beside a cottage so its craft reads at a glance.
@@ -96,6 +98,13 @@ export async function loadAtlas() {
       new Texture({ source: sheet.source, frame: new Rectangle(i * fw, 0, fw, fh) }));
   }
 
+  // Building animations — barracks: 4 frames, pixel-perfect sprite.
+  const barracksSheet = await Assets.load('/assets/buildings/barracks.png');
+  barracksSheet.source.scaleMode = 'nearest';
+  const n = 4, fw = barracksSheet.width / n, fh = barracksSheet.height;
+  const barracksFrames = Array.from({ length: n }, (_, i) =>
+    new Texture({ source: barracksSheet.source, frame: new Rectangle(i * fw, 0, fw, fh) }));
+
   // Resource-node sprites (Qoupy's ROGNs — NON-COMMERCIAL, credit required;
   // see assets/mining/CREDITS.md). 16px ore veins + a boulder centerpiece.
   const oreTex = [];
@@ -128,5 +137,5 @@ export async function loadAtlas() {
     '1,-1': tex(36), '1,0': tex(37), '1,1': tex(38),
   };
 
-  return { tex, ground, trees: TREES, clusters: CLUSTERS, fence, walk, oreTex, boulderTex, images, crops, farmDirt, cropOrder: ['greens', 'grain', 'roots'], RECIPES, PROP, HOUSE_OF };
+  return { tex, ground, trees: TREES, clusters: CLUSTERS, fence, walk, oreTex, boulderTex, images, crops, farmDirt, cropOrder: ['greens', 'grain', 'roots'], anims: { barracks: barracksFrames }, RECIPES, PROP, HOUSE_OF };
 }

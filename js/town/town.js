@@ -291,6 +291,19 @@ function makeBuildingContainer(recipe, propIdx) {
     c.addChild(s); c.baseH = recipe.h;
     return c;
   }
+  if (recipe.anim) {
+    // An animated building — frames play in a loop at a gentle pace, scaled
+    // to fit recipe.w tiles wide, anchored at its base like image buildings.
+    const frames = S.atlas.anims[recipe.anim];
+    const s = new AnimatedSprite(frames);
+    s.anchor.set(0.5, 1);
+    s.animationSpeed = 0.08;
+    s.play();
+    s.scale.set((recipe.w * TILE) / frames[0].width);
+    s.x = recipe.w * TILE / 2; s.y = recipe.h * TILE;
+    c.addChild(s); c.baseH = recipe.h;
+    return c;
+  }
   for (const t of recipe.tiles) {
     const s = new Sprite(S.atlas.tex(t.i));
     s.x = t.x * TILE; s.y = t.y * TILE; c.addChild(s);
