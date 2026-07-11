@@ -137,5 +137,15 @@ export async function loadAtlas() {
     '1,-1': tex(36), '1,0': tex(37), '1,1': tex(38),
   };
 
-  return { tex, ground, trees: TREES, clusters: CLUSTERS, fence, walk, oreTex, boulderTex, images, crops, farmDirt, cropOrder: ['greens', 'grain', 'roots'], anims: { barracks: barracksFrames }, RECIPES, PROP, HOUSE_OF };
+  // Water (ArMM overworld, CC0) — a calm ripple fill for lakes/coast, a
+  // diagonal-streak flow fill for rivers, and one foam shore-edge tile.
+  // town.js rotates that one edge tile per side (N/S/E/W) instead of needing
+  // 4 baked directions — the same trick wallPieceFor uses for fence corners.
+  const water = {
+    fill: [armmTile(3, 3), armmTile(4, 3), armmTile(5, 3)],
+    flow: [armmTile(18, 6), armmTile(19, 6), armmTile(20, 6)],
+    edge: armmTile(19, 8),
+  };
+
+  return { tex, ground, trees: TREES, clusters: CLUSTERS, fence, walk, oreTex, boulderTex, images, crops, farmDirt, cropOrder: ['greens', 'grain', 'roots'], anims: { barracks: barracksFrames }, RECIPES, PROP, HOUSE_OF, water };
 }

@@ -41,6 +41,7 @@ const S = {
   placed: new Map(),   // typeKey -> {container}
   villagers: [], plots: [], usedPlots: new Set(),
   oreFieldPlots: new Set(), // plot cells the ore field occupies — nextFreePlot only (not the wall/wander, which read usedPlots)
+  waterPlots: new Set(), // plot cells water (or a claimed wharf shore tile) occupies — nextFreePlot only, mirrors oreFieldPlots
   orderLog: [], focus: null, chronicle: [],
   stewardBusy: false, lastRaidTally: 0, alarm: 0,
   hudOn: true, ui: { pinned: new Set() }, // ui.pinned: category keys clicked open (see chip() in updateHUD)
@@ -54,6 +55,10 @@ const S = {
   wallSprites: [], wallsVersion: 0, wallsRendered: -1,
   wallEdgesBuilt: new Set(), // which sides of the settlement localSteward has already planned (see planDefensiveSegment)
   oreNodes: [], woodNodes: [], // resource nodes the folk walk out to work
+  // Impassable water (see findPath, which blocks S.water exactly like
+  // S.walls) and its shoreline: land tiles touching water, nearest-town
+  // first, that nextWharfSite claims for new Fishing Wharfs. See placeWater.
+  water: new Set(), shoreSites: [],
   mask: { aspect: 'the Will', speakers: 'Speakers' }, // the god's local face, set from tier at boot
   lastWill: null, // last invocation: {utterance, aspect, speakers:[{name,parish,directive,word,orders}]} — powers the left Speakers panel
   // Hover-highlight state (seed of the jobs system's assignment viz — see
@@ -142,6 +147,7 @@ async function boot() {
   buildPlots();
   paintGround();
   placeOreNodes();
+  placeWater();
   placeTownhall();
   reconcileBuildings();  // existing buildings appear without a poof
   S.booted = true;       // from here on, finished construction gets an effect
@@ -340,7 +346,7 @@ function recipeFor(type) {
 function nextFreePlot() {
   for (const p of S.plots) {
     const key = `${p.px},${p.py}`;
-    if (S.usedPlots.has(key) || S.oreFieldPlots.has(key)) continue; // oreFieldPlots: see placeOreNodes
+    if (S.usedPlots.has(key) || S.oreFieldPlots.has(key) || S.waterPlots.has(key)) continue; // oreFieldPlots: see placeOreNodes; waterPlots: see placeWater
     S.usedPlots.add(key); return p;
   }
   return null;
@@ -415,6 +421,13 @@ function reconcileBuildings() {
         const node = nextMineNode();
         if (!node) break; // the ore field is fully claimed — this mine waits
         plot = { tx: Math.round(node.x / TILE - recipe.w / 2), ty: Math.round(node.y / TILE - recipe.h), node };
+        cx = plot.tx * TILE; cy = plot.ty * TILE;
+      } else if (type === 'wharf') {
+        // Same idea, on the waterfront: claim the next free shore tile
+        // placeWater() found, instead of a town plot (see nextWharfSite).
+        const site = nextWharfSite();
+        if (!site) break; // no shoreline left (or none at all) — this wharf waits
+        plot = { tx: Math.round(site.x / TILE - recipe.w / 2), ty: Math.round(site.y / TILE - recipe.h), site };
         cx = plot.tx * TILE; cy = plot.ty * TILE;
       } else {
         plot = nextFreePlot();
@@ -547,6 +560,176 @@ function placeOreNodes() {
     const [kind, tex] = pickKind();
     addNode(kind, tex, gx, gy);
   }
+}
+
+// ---- water --------------------------------------------------------------
+// placeWater lays impassable water from the hold's own worldgen node
+// (S.hold.n: riverMax/lake/sea — see world.js scanNeighborhood). Exactly one
+// feature is drawn, whichever of river/lake/coast the numbers favor, scored
+// with the same weights waterRich() (game.js) uses to gate the Fishing
+// Wharf — so the shape on screen always agrees with whether a wharf is even
+// offered. Every covered tile lands in S.water, which findPath blocks
+// exactly like S.walls, and the shoreline (land touching water) is banked in
+// S.shoreSites for nextWharfSite to claim.
+function placeWater() {
+  const n = S.hold.n || {};
+  const river = n.riverMax || 0, lake = n.lake || 0, sea = n.sea || 0;
+  const scores = { river: river * 0.09, lake: lake * 0.12, coast: sea * 0.05 };
+  const [kind, score] = Object.entries(scores).sort((a, b) => b[1] - a[1])[0];
+  if (score < 0.02) return; // negligible water here — no feature, no shore, no wharf (matches the wharf's own gate)
+
+  const r = rng((S.hold.x * 6542989) ^ (S.hold.y * 96557) ^ 0xdeadbeef);
+  const tiles = kind === 'river' ? riverTiles(r, river) : kind === 'lake' ? lakeTiles(r, lake) : coastTiles(r, sea);
+
+  // Never over the town's core (mirrors paintGround's own no-build `near`
+  // set) or the ore field's footprint — a hold can have both out in the wilds.
+  const core = new Set(S.plots.slice(0, 22).map((p) => `${p.px},${p.py}`));
+  for (const [tx, ty] of tiles) {
+    if (tx < 0 || ty < 0 || tx >= TOWN_W || ty >= TOWN_H) continue;
+    const pk = `${Math.floor(tx / PLOT)},${Math.floor(ty / PLOT)}`;
+    if (core.has(pk) || S.oreFieldPlots.has(pk)) continue;
+    S.water.add(`${tx},${ty}`);
+    S.waterPlots.add(pk);
+  }
+  if (!S.water.size) return; // the whole shape landed in reserved ground — give up quietly
+
+  paintWaterTiles(kind, r);
+  clearTreesUnderWater();
+  buildShoreSites();
+}
+
+// riverTiles — a wavy vertical band offset well clear of the town centre;
+// width (and wobble) rise with riverMax (a Kropan-scale river runs wide).
+function riverTiles(r, river) {
+  const width = Math.max(2, Math.min(8, Math.round(2 + river * 0.5)));
+  const side = r() < 0.5 ? -1 : 1;
+  const baseX = TOWN_W / 2 + side * (20 + r() * 10);
+  const amp = 3 + r() * 3, freq = 0.05 + r() * 0.04, phase = r() * Math.PI * 2;
+  const tiles = [];
+  for (let ty = 0; ty < TOWN_H; ty++) {
+    const cx = Math.round(baseX + Math.sin(ty * freq + phase) * amp);
+    for (let dx = 0; dx < width; dx++) tiles.push([cx - Math.floor(width / 2) + dx, ty]);
+  }
+  return tiles;
+}
+
+// lakeTiles — a wobbly rounded blob off to one side; radius rises with lake.
+function lakeTiles(r, lake) {
+  const rad = Math.max(3, Math.min(13, 3 + lake * 7));
+  const angle = r() * Math.PI * 2, dist = 22 + r() * 10;
+  const cx = Math.round(TOWN_W / 2 + Math.cos(angle) * dist);
+  const cy = Math.round(TOWN_H / 2 + Math.sin(angle) * dist * 0.75); // the map's flatter than it's wide
+  const bumps = 10, wob = Array.from({ length: bumps }, () => 0.75 + r() * 0.5);
+  const wobbleAt = (a) => {
+    const f = ((a + Math.PI * 2) % (Math.PI * 2)) / (Math.PI * 2) * bumps;
+    const i0 = Math.floor(f) % bumps, i1 = (i0 + 1) % bumps, t = f - Math.floor(f);
+    return wob[i0] * (1 - t) + wob[i1] * t;
+  };
+  const tiles = [];
+  const ir = Math.ceil(rad) + 2;
+  for (let dy = -ir; dy <= ir; dy++) for (let dx = -ir; dx <= ir; dx++) {
+    if (Math.hypot(dx, dy) <= rad * wobbleAt(Math.atan2(dy, dx))) tiles.push([cx + dx, cy + dy]);
+  }
+  return tiles;
+}
+
+// coastTiles — one map edge filled to a wavy depth; thickness rises with sea.
+function coastTiles(r, sea) {
+  const depth = Math.max(6, Math.min(16, Math.round(8 + sea * 40)));
+  const edge = ['n', 's', 'e', 'w'][Math.floor(r() * 4)];
+  const bumps = 12, wob = Array.from({ length: bumps }, () => -3 + r() * 6);
+  const wobbleAt = (i, span) => {
+    const f = (i / span) * bumps;
+    const i0 = Math.floor(f) % bumps, i1 = (i0 + 1) % bumps, t = f - Math.floor(f);
+    return wob[i0] * (1 - t) + wob[i1] * t;
+  };
+  const tiles = [];
+  const horiz = edge === 'n' || edge === 's';
+  const span = horiz ? TOWN_W : TOWN_H;
+  for (let i = 0; i < span; i++) {
+    const d = Math.max(1, Math.round(depth + wobbleAt(i, span)));
+    for (let k = 0; k < d; k++) {
+      if (horiz) tiles.push([i, edge === 'n' ? k : TOWN_H - 1 - k]);
+      else tiles.push([edge === 'w' ? k : TOWN_W - 1 - k, i]);
+    }
+  }
+  return tiles;
+}
+
+// paintWaterTiles draws every S.water tile: a plain fill/flow variant for
+// interior water, or the single foam edge tile rotated toward whichever
+// cardinal side actually touches land — one atlas slice covers all 4 shore
+// orientations (the same trick wallPieceFor uses for fence corners).
+function paintWaterTiles(kind, r) {
+  const isWater = (x, y) => S.water.has(`${x},${y}`);
+  const pool = kind === 'river' ? S.atlas.water.flow : S.atlas.water.fill;
+  for (const key of S.water) {
+    const [tx, ty] = key.split(',').map(Number);
+    let rot = null;
+    if (!isWater(tx, ty + 1)) rot = 0;                  // land south — foam faces down, the tile's native orientation
+    else if (!isWater(tx, ty - 1)) rot = Math.PI;       // land north
+    else if (!isWater(tx - 1, ty)) rot = Math.PI / 2;   // land west
+    else if (!isWater(tx + 1, ty)) rot = -Math.PI / 2;  // land east
+    const s = new Sprite(rot != null ? S.atlas.water.edge : pool[(r() * pool.length) | 0]);
+    if (rot != null) { s.anchor.set(0.5); s.x = tx * TILE + TILE / 2; s.y = ty * TILE + TILE / 2; s.rotation = rot; }
+    else { s.x = tx * TILE; s.y = ty * TILE; }
+    ground.addChild(s);
+  }
+}
+
+// clearTreesUnderWater — the forest was painted before this (see boot order);
+// drown any tree that landed on a tile water now claims (mirrors
+// placeOreNodes' own clearing of its footprint) and shrink the regrowth cap.
+function clearTreesUnderWater() {
+  let cleared = 0;
+  for (let i = S.woodNodes.length - 1; i >= 0; i--) {
+    const wn = S.woodNodes[i];
+    const tx = Math.floor(wn.x / TILE), ty = Math.round(wn.y / TILE) - 1; // see regWood: x=tx*TILE+TILE/2, y=(ty+1)*TILE
+    if (!S.water.has(`${tx},${ty}`)) continue;
+    for (const s of (wn.sprites || [])) { entities.removeChild(s); s.destroy(); }
+    S.woodNodes.splice(i, 1); cleared++;
+  }
+  if (S.woodCap) S.woodCap -= cleared;
+}
+
+// buildShoreSites banks every land tile touching water — with a second clear
+// land tile above it too, room for a 2-tall wharf — as a wharf candidate,
+// nearest-to-town first, so nextWharfSite always sites toward the bank a
+// villager would actually walk to from the town.
+function buildShoreSites() {
+  const sites = [], seen = new Set();
+  for (const key of S.water) {
+    const [tx, ty] = key.split(',').map(Number);
+    for (const [dx, dy] of DIRS4) {
+      const lx = tx + dx, ly = ty + dy;
+      if (lx < 0 || ly < 0 || lx >= TOWN_W || ly >= TOWN_H) continue;
+      const lk = `${lx},${ly}`;
+      if (S.water.has(lk) || seen.has(lk) || S.water.has(`${lx},${ly - 1}`)) continue; // needs 2 tiles of land, stacked
+      seen.add(lk);
+      sites.push({ tx: lx, ty: ly, x: lx * TILE + TILE / 2, y: ly * TILE + TILE, d: Math.hypot(lx - TOWN_W / 2, ly - TOWN_H / 2), claimed: false });
+    }
+  }
+  sites.sort((a, b) => a.d - b.d);
+  S.shoreSites = sites;
+}
+
+// nextWharfSite claims the next free shoreline tile (nearest town first) for
+// a new Fishing Wharf, reserving its plot cell so the town's own growth never
+// paves over it (mirrors nextMineNode's claim of an ore vein).
+function nextWharfSite() {
+  const site = S.shoreSites.find((s) => !s.claimed);
+  if (!site) return null;
+  site.claimed = true;
+  S.waterPlots.add(`${Math.floor(site.tx / PLOT)},${Math.floor(site.ty / PLOT)}`);
+  return site;
+}
+
+// wharfSiteAvailable — true if a `build wharf` order could actually be sited
+// right now: either the shoreline still has an unclaimed tile, or the town
+// is already past the drawn-instance cap (mirrors mineNodeAvailable).
+function wharfSiteAvailable() {
+  if (S.game.level('wharf') >= MAX_PER_TYPE) return true;
+  return S.shoreSites.some((s) => !s.claimed);
 }
 
 // constructionPoof — a little burst of dust when a building is finished.
@@ -770,19 +953,20 @@ function releaseClaim(v) {
 
 // ---- pathing (route around walls, through gates) ---------------------
 // findPath runs a tile-grid BFS from a pixel position to a destination pixel
-// position, avoiding S.walls tiles and passing freely through S.gates tiles.
-// The town is ~96x72 = ~7k cells — cheap to search on a target PICK (not
-// every frame). Returns a list of pixel waypoints to walk in order (the
-// last one is the exact destination, not just a tile center), or null if no
-// route exists at all (fully walled off with no gate) so the caller can
-// degrade gracefully instead of freezing or clipping through the wall.
+// position, avoiding S.walls and S.water tiles (see placeWater) and passing
+// freely through S.gates tiles. The town is ~96x72 = ~7k cells — cheap to
+// search on a target PICK (not every frame). Returns a list of pixel
+// waypoints to walk in order (the last one is the exact destination, not
+// just a tile center), or null if no route exists at all (fully walled/
+// watered off with no gate) so the caller can degrade gracefully instead of
+// freezing or clipping through the wall.
 const DIRS4 = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 function findPath(px, py, tx, ty) {
   const sx = Math.floor(px / TILE), sy = Math.floor(py / TILE);
   const gx = Math.floor(tx / TILE), gy = Math.floor(ty / TILE);
   if (sx === gx && sy === gy) return [{ x: tx, y: ty }];
   const goalK = wallKey(gx, gy);
-  if (S.walls.has(goalK)) return null;           // destination tile is itself a wall
+  if (S.walls.has(goalK) || S.water.has(goalK)) return null; // destination tile is itself a wall or water
   const startK = wallKey(sx, sy);
   const cameFrom = new Map([[startK, null]]);
   const queue = [[sx, sy]]; let qi = 0;
@@ -793,7 +977,7 @@ function findPath(px, py, tx, ty) {
       const nx = cx + dx, ny = cy + dy;
       if (nx < 0 || ny < 0 || nx >= TOWN_W || ny >= TOWN_H) continue;
       const k = wallKey(nx, ny);
-      if (cameFrom.has(k) || S.walls.has(k)) continue;
+      if (cameFrom.has(k) || S.walls.has(k) || S.water.has(k)) continue;
       cameFrom.set(k, wallKey(cx, cy));
       queue.push([nx, ny]);
     }
@@ -1311,6 +1495,8 @@ function advanceOrder(a, dt) {
     // with nowhere to stand. This is the town-side "correct placement"
     // resolution for any `build mine` order, however it was raised.
     if (a.target === 'mine' && !mineNodeAvailable()) { a.status = 'skipped'; a.doneAt = Date.now(); return; }
+    // Same idea for a wharf — no shoreline left to build it on (see placeWater).
+    if (a.target === 'wharf' && !wharfSiteAvailable()) { a.status = 'skipped'; a.doneAt = Date.now(); return; }
     // A new farm is its own field (with a crop); other builds raise a level.
     const ok = a.target === 'farm' ? S.game.newFarm(a.crop) : S.game.build(a.target);
     if (ok) { a.qtyLeft -= 1; a.waited = 0; }
