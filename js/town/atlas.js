@@ -104,5 +104,20 @@ export async function loadAtlas() {
   const boulderTex = await Assets.load('/assets/mining/nodes/boulderNode.png');
   boulderTex.source.scaleMode = 'nearest';
 
-  return { tex, ground, trees: TREES, clusters: CLUSTERS, fence, walk, oreTex, boulderTex, RECIPES, PROP, HOUSE_OF };
+  // Crop tiles for farm fields (ArMM overworld, CC0). Tilled-dirt based, so
+  // they sit inside a Kenney grass-edged border and never touch grass directly
+  // (ArMM's saturated green would clash at the seam).
+  const armm = await Assets.load('/assets/tiles/armm1998_overworld_atlas.png');
+  armm.source.scaleMode = 'nearest';
+  const armmTile = (col, row) => new Texture({ source: armm.source, frame: new Rectangle(col * TILE, row * TILE, TILE, TILE) });
+  const crops = { greens: armmTile(0, 34), grain: armmTile(1, 34), roots: armmTile(0, 35) };
+  // Kenney 9-slice grass-edged dirt for the field border, keyed by edge:
+  // farmDirt[`${edgeY},${edgeX}`] where edge is -1/0/1 (top/mid/bottom, left/mid/right).
+  const farmDirt = {
+    '-1,-1': tex(12), '-1,0': tex(13), '-1,1': tex(14),
+    '0,-1': tex(24), '0,0': tex(25), '0,1': tex(26),
+    '1,-1': tex(36), '1,0': tex(37), '1,1': tex(38),
+  };
+
+  return { tex, ground, trees: TREES, clusters: CLUSTERS, fence, walk, oreTex, boulderTex, crops, farmDirt, cropOrder: ['greens', 'grain', 'roots'], RECIPES, PROP, HOUSE_OF };
 }
