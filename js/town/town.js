@@ -40,8 +40,10 @@ const S = {
   hold: null, game: null, atlas: null,
   placed: new Map(),   // typeKey -> {container}
   villagers: [], plots: [], usedPlots: new Set(),
-  oreFieldPlots: new Set(), // plot cells the ore field occupies — nextFreePlot only (not the wall/wander, which read usedPlots)
-  waterPlots: new Set(), // plot cells water (or a claimed wharf shore tile) occupies — nextFreePlot only, mirrors oreFieldPlots
+  oreFieldPlots: new Set(), // plot cells the ore field occupies — the plot allocators only (nextCorePlot/nextOuterPlot/nextFarmPlot), not the wall/wander, which read usedPlots
+  waterPlots: new Set(), // plot cells water (or a claimed wharf shore tile) occupies — the plot allocators only, mirrors oreFieldPlots
+  oreFieldCenter: null, // {x,y} px — set by placeOreNodes; read by outerBias (quarry) + farmlandAnchor
+  farmAnchor: null, // {px,py} plot coords — the farmland district's centre, set once by farmlandAnchor
   orderLog: [], focus: null, chronicle: [],
   stewardBusy: false, lastRaidTally: 0, alarm: 0,
   hudOn: true, ui: { pinned: new Set() }, // ui.pinned: category keys clicked open (see chip() in updateHUD)
@@ -350,13 +352,190 @@ function recipeFor(type) {
   return { recipe: RECIPES[house], prop: PROP[type] ?? null };
 }
 
-function nextFreePlot() {
+// ---- districts ----------------------------------------------------------
+// CORE (dwellings/stores/faith/command) stays inside the walls; OUTER
+// (resource works) sits outside. Mines/wharfs already self-site on their
+// vein/shore (nextMineNode/nextWharfSite below) — this covers everything
+// else: the CORE-plot allocator (nextCorePlot), the OUTER-ring allocator for
+// terrain-biased non-self-siting works (nextOuterPlot; sawmill/quarry/
+// saltern), and the farmland district that clusters fields instead of
+// scattering them (nextFarmPlot/farmlandAnchor — the sprawl fix).
+const CORE_TYPES = new Set(['longhouse', 'granary', 'reliquary', 'market', 'barracks']);
+const OUTER_TYPES = new Set(['farm', 'wharf', 'mine', 'sawmill', 'quarry', 'saltern']);
+const CORE_R0 = 2, CORE_GROW_EVERY = 3, CORE_R_MAX = 6; // plot-units (×PLOT tiles) — see coreRadius
+
+// coreRadius — the core zone's radius in plot-units from town centre,
+// growing as CORE_TYPES buildings actually go up (so the walls in
+// planDefensiveSegment have room to enclose them as the town grows), but
+// never past maxSafeCoreRadius — THIS hold's actual clearance to its ore
+// field/shoreline (see placeOreNodes/placeWater), not a fixed guess. That
+// keeps the wall from ever being drawn across the vein field or the shore,
+// whatever CORE_R_MAX allows for a hold with more open ground.
+function coreRadius() {
+  let n = 0;
+  for (const key of S.placed.keys()) if (CORE_TYPES.has(key.slice(0, key.indexOf('#')))) n++;
+  return Math.min(CORE_R_MAX, CORE_R0 + Math.floor(n / CORE_GROW_EVERY), maxSafeCoreRadius());
+}
+
+// maxSafeCoreRadius — the farthest the core zone can grow before its own
+// wall box would reach the ore field, the shoreline, OR a self-sited
+// building already claimed just past it (a wharf's shore tile joins
+// S.waterPlots the moment nextWharfSite claims it — see below — same for a
+// mine's vein and S.oreFieldPlots at boot). Chebyshev distance (matches the
+// wall's own square shape — see plotInCore). NOT cached: those sets grow as
+// the town does, and a stale radius is exactly how the wall ends up drawn
+// across a wharf that got sited after the radius was first read.
+function maxSafeCoreRadius() {
+  const ccx = (PLOTS_X - 1) / 2, ccy = (PLOTS_Y - 1) / 2;
+  let min = Infinity;
+  for (const key of [...S.oreFieldPlots, ...S.waterPlots]) {
+    const [px, py] = key.split(',').map(Number);
+    min = Math.min(min, Math.max(Math.abs(px - ccx), Math.abs(py - ccy)));
+  }
+  return min === Infinity ? CORE_R_MAX : Math.max(CORE_R0, min - 1);
+}
+
+// plotInCore — is plot (px,py) inside the core zone? Chebyshev (square)
+// distance, NOT Euclidean: the wall is an axis-aligned box (straight N/S/E/W
+// segments), and a circular test's corners would fall short of it by up to
+// radius×(√2−1) tiles — exactly the gap that once let an "outside core"
+// OUTER building (a wharf, near a box corner) land under the wall anyway.
+// Matching the test to the wall's real shape closes that gap.
+function plotInCore(px, py) {
+  const ccx = (PLOTS_X - 1) / 2, ccy = (PLOTS_Y - 1) / 2;
+  return Math.max(Math.abs(px - ccx), Math.abs(py - ccy)) <= coreRadius();
+}
+
+// insideCore/isInsideWalls — tile-space test for "protected inside the
+// walls". MVP: plotInCore's square zone (coreRadius, in plot-units) rather
+// than a true flood-fill enclosure — cheap, robust, and it's exactly what
+// planDefensiveSegment's wall box actually encloses (modulo its own +2 tile
+// clearance margin).
+function insideCore(tx, ty) { return plotInCore(tx / PLOT, ty / PLOT); }
+function isInsideWalls(tx, ty) { return insideCore(tx, ty); }
+
+// nextCorePlot sites a CORE building (dwellings/stores/faith/command)
+// inside the walled core zone, nearest the centre first (S.plots is already
+// distance-sorted) — never on an ore/water-reserved cell.
+function nextCorePlot() {
   for (const p of S.plots) {
+    if (!plotInCore(p.px, p.py)) continue; // outside the core zone — not for CORE_TYPES
     const key = `${p.px},${p.py}`;
-    if (S.usedPlots.has(key) || S.oreFieldPlots.has(key) || S.waterPlots.has(key)) continue; // oreFieldPlots: see placeOreNodes; waterPlots: see placeWater
+    if (S.usedPlots.has(key) || S.oreFieldPlots.has(key) || S.waterPlots.has(key)) continue;
     S.usedPlots.add(key); return p;
   }
-  return null;
+  return null; // core zone is full — waits for coreRadius to grow (more CORE_TYPES built)
+}
+
+// nextOuterPlot sites an OUTER building that doesn't self-site on terrain
+// (sawmill/quarry/saltern — mines/wharfs claim a vein/shore tile directly,
+// see nextMineNode/nextWharfSite): a plot outside the core zone, biased
+// toward (biasX,biasY) in pixels when given (the woodline for a sawmill,
+// the ore field for a quarry — see outerBias), else the nearest free outer
+// plot to town.
+function nextOuterPlot(biasX, biasY) {
+  const free = (p) => {
+    const key = `${p.px},${p.py}`;
+    return !plotInCore(p.px, p.py) && !S.usedPlots.has(key) && !S.oreFieldPlots.has(key) && !S.waterPlots.has(key);
+  };
+  if (biasX == null) {
+    for (const p of S.plots) if (free(p)) { S.usedPlots.add(`${p.px},${p.py}`); return p; }
+    return null;
+  }
+  let best = null, bd = Infinity;
+  for (const p of S.plots) {
+    if (!free(p)) continue;
+    // p.tx/p.ty are tile-index (see buildPlots); biasX/biasY are pixels
+    // (see outerBias) — convert to the same units before comparing.
+    const dd = (p.tx * TILE - biasX) ** 2 + (p.ty * TILE - biasY) ** 2;
+    if (dd < bd) { bd = dd; best = p; }
+  }
+  if (best) S.usedPlots.add(`${best.px},${best.py}`);
+  return best;
+}
+
+// outerBias — the terrain a given OUTER building type wants to sit near,
+// for nextOuterPlot. null = no preference (nearest free outer plot).
+function outerBias(type) {
+  if (type === 'sawmill') {
+    const n = nearestNode(TOWN_W / 2 * TILE, TOWN_H / 2 * TILE, 'wood');
+    return n ? { x: n.x, y: n.y } : null;
+  }
+  if (type === 'quarry' && S.oreFieldCenter) return S.oreFieldCenter;
+  return null; // saltern etc — no terrain bias modeled yet
+}
+
+// ---- farmland district (the sprawl fix) ----------------------------------
+// farmlandAnchor picks the farmland district's centre once (deterministic
+// per hold), just past the core zone and — best-effort, scored over a
+// handful of candidate directions — clear of the ore field/water. New
+// fields cluster near it via nextFarmPlot; once fields exist, THEY become
+// the pull (adjacency wins), so the district reads as one grown zone
+// instead of plots scattered wherever the old flat allocator found room.
+function farmlandAnchor() {
+  if (S.farmAnchor) return S.farmAnchor;
+  const r = rng((S.hold.x * 104729) ^ (S.hold.y * 65537) ^ 0xfa4b1a);
+  const ccx = (PLOTS_X - 1) / 2, ccy = (PLOTS_Y - 1) / 2;
+  const baseR = coreRadius() + 3;
+  let best = null, bestScore = -1;
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2 + r() * 0.3;
+    const dist = baseR + 2 + r() * 2;
+    const px = Math.round(ccx + Math.cos(a) * dist), py = Math.round(ccy + Math.sin(a) * dist * 0.8);
+    if (px < 1 || py < 1 || px >= PLOTS_X - 1 || py >= PLOTS_Y - 1) continue;
+    // Score: how much open (non-reserved) ground surrounds this candidate —
+    // fewer ore/water plots nearby wins, so the district doesn't land on top
+    // of the vein field or the shoreline.
+    let free = 0;
+    for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+      const key = `${px + dx},${py + dy}`;
+      if (!S.oreFieldPlots.has(key) && !S.waterPlots.has(key)) free++;
+    }
+    if (free > bestScore) { bestScore = free; best = { px, py }; }
+  }
+  S.farmAnchor = best || { px: Math.round(ccx), py: Math.round(ccy + baseR) };
+  return S.farmAnchor;
+}
+
+// nextFarmPlot sites a new farm field IN the farmland district: adjacent to
+// an already-placed field where possible (the district grows as one
+// contiguous cluster, not scattered plots), else nearest free plot to the
+// district's anchor. This, plus wantsNewFarmField's fill-before-sprawl rule
+// in localSteward, is the fix for the old single-plot farm sprawl.
+function nextFarmPlot() {
+  const anchor = farmlandAnchor();
+  const free = (p) => {
+    const key = `${p.px},${p.py}`;
+    return !plotInCore(p.px, p.py) && !S.usedPlots.has(key) && !S.oreFieldPlots.has(key) && !S.waterPlots.has(key);
+  };
+  const existing = [...S.placed.entries()].filter(([k]) => k.startsWith('farm#')).map(([, v]) => v.plot);
+  if (existing.length) {
+    let best = null, bd = Infinity;
+    for (const p of S.plots) {
+      if (!free(p)) continue;
+      for (const ex of existing) {
+        const dd = Math.hypot(p.px - ex.px, p.py - ex.py);
+        if (dd <= 1.5 && dd < bd) { bd = dd; best = p; } // adjacent (incl. diagonal) to a placed field
+      }
+    }
+    if (best) { S.usedPlots.add(`${best.px},${best.py}`); return best; }
+  }
+  let best = null, bd = Infinity;
+  for (const p of S.plots) {
+    if (!free(p)) continue;
+    const dd = (p.px - anchor.px) ** 2 + (p.py - anchor.py) ** 2;
+    if (dd < bd) { bd = dd; best = p; }
+  }
+  if (best) S.usedPlots.add(`${best.px},${best.py}`);
+  return best;
+}
+
+// wantsNewFarmField — true only once every existing field is already maxed
+// (or none exist yet): the district FILLS before it SPRAWLS. Read by
+// localSteward instead of the old scarce-food coin-flip.
+function wantsNewFarmField() {
+  const fields = S.game.farmPlots || [];
+  return !fields.length || fields.every((p) => p.size >= 3);
 }
 
 // nextMineNode claims the next available ore vein for a new Deep Mine,
@@ -436,8 +615,18 @@ function reconcileBuildings() {
         if (!site) break; // no shoreline left (or none at all) — this wharf waits
         plot = { tx: Math.round(site.x / TILE - recipe.w / 2), ty: Math.round(site.y / TILE - recipe.h), site };
         cx = plot.tx * TILE; cy = plot.ty * TILE;
+      } else if (OUTER_TYPES.has(type)) {
+        // sawmill/quarry/saltern: an outer-ring plot, biased toward their
+        // terrain when one's modeled (see outerBias).
+        const bias = outerBias(type);
+        plot = nextOuterPlot(bias && bias.x, bias && bias.y);
+        if (!plot) return;
+        cx = plot.tx * TILE + Math.floor((PLOT - recipe.w) / 2) * TILE;
+        cy = (plot.ty + PLOT - recipe.h) * TILE;
       } else {
-        plot = nextFreePlot();
+        // CORE_TYPES: dwellings/stores/faith/command — a plot inside the
+        // walled core zone (see nextCorePlot/coreRadius).
+        plot = nextCorePlot();
         if (!plot) return;
         cx = plot.tx * TILE + Math.floor((PLOT - recipe.w) / 2) * TILE;
         cy = (plot.ty + PLOT - recipe.h) * TILE;
@@ -472,7 +661,7 @@ function reconcileFarms() {
     const fp = plots[i], key = `farm#${i}`;
     const ex = S.placed.get(key);
     if (ex && ex.size === fp.size) continue;   // already drawn at this size
-    const plot = ex ? ex.plot : nextFreePlot();
+    const plot = ex ? ex.plot : nextFarmPlot(); // new fields cluster into the farmland district — see nextFarmPlot
     if (!plot) return;
     if (ex) { ground.removeChild(ex.container); ex.container.destroy({ children: true }); S.hittable = S.hittable.filter((h) => h.key !== key); }
     const c = makeFarmField(fp);
@@ -508,6 +697,7 @@ function placeOreNodes() {
   const a = r() * Math.PI * 2;
   const fx = Math.round(TOWN_W / 2 + Math.cos(a) * 12);   // just outside the town, in view
   const fy = Math.round(TOWN_H / 2 + Math.sin(a) * 11);
+  S.oreFieldCenter = { x: fx * TILE, y: fy * TILE }; // outerBias's quarry pull, and farmlandAnchor's clearance scoring
   // Anchored in the world-sim: WHICH ores the ground yields and HOW big the
   // field is follow the hold's real ore/stone richness (from its neighborhood
   // scan). Every hold has a stone outcrop; richer rock adds coal→copper→iron→gold
@@ -526,9 +716,9 @@ function placeOreNodes() {
   // buildPlots() tiles the WHOLE map (sorted by distance from centre), and the
   // field sits only ~12 tiles out — squarely in the plots a growing town would
   // claim next. Reserve the field's footprint (a separate set from usedPlots,
-  // which also drives the palisade bbox and villager wander points — this is
-  // for nextFreePlot only) so a farm/sawmill/etc. never lands on a vein or a
-  // mine raised on one.
+  // which also drives villager wander points — this is for the plot
+  // allocators only) so a farm/sawmill/etc. never lands on a vein or a mine
+  // raised on one.
   for (let ty = fy - 5; ty <= fy + 5; ty++) for (let tx = fx - 5; tx <= fx + 5; tx++) {
     S.oreFieldPlots.add(`${Math.floor(tx / PLOT)},${Math.floor(ty / PLOT)}`);
   }
@@ -811,11 +1001,23 @@ function loadWalls() {
   } catch { /* corrupt or sandboxed — start with a clean slate */ }
 }
 
+// buildingAtTile — is tile (tx,ty) under an already-placed building's
+// footprint (S.hittable)? Buildings don't block pathing (only S.walls/
+// S.water do — see findPath), so this exists purely so a wall segment
+// doesn't draw a fence tile straight through one (a self-sited mine/wharf
+// can legitimately end up near the core boundary — see coreRadius).
+function buildingAtTile(tx, ty) {
+  for (const h of S.hittable) if (tx >= h.x0 && tx < h.x1 && ty >= h.y0 && ty < h.y1) return true;
+  return false;
+}
+
 // layWallSegment adds every tile on the straight line from `from` to `to`
 // (inclusive) to S.walls, carving a gate at `gate` if given (that one tile
 // becomes passable + drawn as an opening instead of fence). Only ever lays
 // straight (axis-aligned) runs — a diagonal from an LLM-authored order is
 // snapped to its dominant axis so the tile-by-tile walk below terminates.
+// Skips any tile a building already occupies (buildingAtTile) — the fence
+// meets the building instead of cutting through its sprite.
 function layWallSegment(from, to, gate) {
   from = { x: clampX(from.x), y: clampY(from.y) };
   to = { x: clampX(to.x), y: clampY(to.y) };
@@ -827,7 +1029,7 @@ function layWallSegment(from, to, gate) {
   let x = from.x, y = from.y, guard = 0;
   while (guard++ <= TOWN_W + TOWN_H) {
     if (g && g.x === x && g.y === y) { S.walls.delete(wallKey(x, y)); S.gates.add(wallKey(x, y)); }
-    else { S.gates.delete(wallKey(x, y)); S.walls.add(wallKey(x, y)); }
+    else if (!buildingAtTile(x, y)) { S.gates.delete(wallKey(x, y)); S.walls.add(wallKey(x, y)); }
     if (x === to.x && y === to.y) break;
     x += dx; y += dy;
   }
@@ -1587,21 +1789,19 @@ function autoFund(id) {
 }
 
 // planDefensiveSegment — the local heuristic's autonomous wall planner: picks
-// the next un-walled side of the settlement's built footprint (a straight
-// north/south/east/west run just outside its plot bounding box) and a gate
-// at its middle so the folk can still reach the fields/nodes beyond it.
-// Cycles through all four sides once each (S.wallEdgesBuilt); once all four
-// are planned locally, further walls are the Will's speakers to extend/gate.
+// the next un-walled side of the CORE zone (a straight north/south/east/west
+// run just outside coreRadius, see insideCore) and a gate at its middle so
+// the folk can still reach the farmland/mines/wharfs beyond it. This wraps
+// the protected core — dwellings/stores/faith — NOT the town's whole built
+// footprint (which would swallow the outer resource works too). Cycles
+// through all four sides once each (S.wallEdgesBuilt); once all four are
+// planned locally, further walls are the Will's speakers to extend/gate.
 function planDefensiveSegment() {
-  let minX = 1e9, minY = 1e9, maxX = -1e9, maxY = -1e9;
-  for (const key of S.usedPlots) {
-    const [px, py] = key.split(',').map(Number);
-    minX = Math.min(minX, px * PLOT); minY = Math.min(minY, py * PLOT);
-    maxX = Math.max(maxX, (px + 1) * PLOT - 1); maxY = Math.max(maxY, (py + 1) * PLOT - 1);
-  }
-  if (minX > maxX) return null;   // nothing built yet — nowhere to wall
-  const x0 = Math.max(0, minX - 2), y0 = Math.max(0, minY - 2);
-  const x1 = Math.min(TOWN_W - 1, maxX + 2), y1 = Math.min(TOWN_H - 1, maxY + 2);
+  if (!S.usedPlots.size) return null; // nothing built yet — nowhere to wall
+  const ccx = TOWN_W / 2, ccy = TOWN_H / 2;
+  const rad = coreRadius() * PLOT + 2; // the core zone, +2 tiles clearance past its buildings
+  const x0 = Math.max(0, Math.round(ccx - rad)), y0 = Math.max(0, Math.round(ccy - rad));
+  const x1 = Math.min(TOWN_W - 1, Math.round(ccx + rad)), y1 = Math.min(TOWN_H - 1, Math.round(ccy + rad));
   const midX = Math.round((x0 + x1) / 2), midY = Math.round((y0 + y1) / 2);
   const sides = {
     north: { from: { x: x0, y: y0 }, to: { x: x1, y: y0 }, gate: { x: midX, y: y0 } },
@@ -1622,10 +1822,12 @@ function planDefensiveSegment() {
 function localSteward() {
   if (S.orderLog.some((o) => o.status === 'pending' || o.status === 'active')) return;
   const g = S.game, h = S.hold;
-  // Sometimes grow an existing field rather than raise a new farm, so both the
-  // expand and build paths show up on their own (the Will steers this later).
+  // Farmland is a DISTRICT that fills before it sprawls: while any existing
+  // field still has room to grow, expand it rather than breaking ground on a
+  // new one (see wantsNewFarmField/nextFarmPlot) — replaces the old
+  // scarce-food coin-flip that scattered size-1 fields across the map.
   const wantFood = S.focus === 'food' || g.res.food < g.caps().food * 0.35;
-  if (wantFood && (g.farmPlots || []).some((p) => p.size < 3) && Math.random() < 0.5) {
+  if ((wantFood || (h.rich.food || 0) >= 0.12) && !wantsNewFarmField()) {
     pushOrder({ type: 'expand', target: 'farm', qty: 1 }); return;
   }
   // Walls: the same trigger the old auto-ring had (raided + under-defended,
@@ -1639,6 +1841,10 @@ function localSteward() {
     if (seg) { pushOrder({ type: 'wall', target: 'palisade', from: seg.from, to: seg.to, gate: seg.gate, qty: 1 }); return; }
   }
   const want = [];
+  // A speaker's focus can bid a specific building outright — the placement
+  // layer (nextCorePlot/nextOuterPlot/nextFarmPlot) still decides WHICH
+  // district it lands in by type, so this only biases priority, not routing.
+  if (S.focus && S.focus !== 'food' && S.focus !== 'defense' && BUILDINGS.some((b) => b.id === S.focus)) want.push(S.focus);
   if (g.pop >= g.popCap() - 0.5) want.push('longhouse');
   if (!g.tradeUnlocked()) want.push('market');
   if (g.res.food >= g.caps().food * 0.92) want.push('granary');
