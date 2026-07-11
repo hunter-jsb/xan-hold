@@ -1111,7 +1111,7 @@ async function callWill(occasion, instruction) {
       body: JSON.stringify(willState(occasion, instruction)),
     });
     const d = await res.json();
-    if (d.utterance) pushChronicle('✦ ' + d.utterance, 'will');
+    if (d.utterance) pushChronicle(icon('faith', 'sm') + ' ' + d.utterance, 'will');
     let bidden = 0;
     for (const sp of (d.speakers || [])) {
       if (sp.word) pushChronicle('“' + sp.word + '”', 'speaker');
@@ -1182,7 +1182,18 @@ function stewardState(occasion, instruction) {
 }
 
 // ---- HUD ------------------------------------------------------------
-const RES_ICON = { food: '🌾', timber: '🪵', stone: '🪨', ore: '⛏️', salt: '🧂', coin: '🪙', faith: '✦' };
+// icon: HUD glyphs are real pixel-art PNGs (Raven Fantasy Icons — see
+// assets/icons/CREDITS.md), dropped in as <img> since the HUD is a DOM
+// overlay, not canvas. cls lets callers ask for a size variant (e.g. 'sm').
+const icon = (name, cls = '') => `<img class="ricon${cls ? ' ' + cls : ''}" src="/assets/icons/${name}.png" alt="">`;
+const RES_ICON = {
+  food: icon('food'), timber: icon('timber'), stone: icon('stone'), ore: icon('ore'),
+  salt: icon('salt'), coin: icon('coin'), faith: icon('faith'),
+};
+// CAT_ICON: resource-key → icon name for the upcoming category-chips HUD
+// refactor (grouping resources under food/mats/ore/trade/money/pop/faith
+// chips instead of a flat strip). Not consumed yet — wiring ahead of time.
+const CAT_ICON = { food: 'food', mats: 'mats', ore: 'ore', trade: 'trade', money: 'coin', pop: 'pop', faith: 'faith' };
 function initHUD(away) {
   document.getElementById('hname').textContent = S.hold.name;
   document.getElementById('hsub').textContent =
@@ -1209,7 +1220,7 @@ function updateHUD() {
   // shown as current/threshold (like pop's current/cap), not a flow.
   const faith = `<span class="res" data-res="faith"><b>${RES_ICON.faith}${Math.floor(g.faith)}/${g.faithThreshold()}</b></span>`;
   document.getElementById('resstrip').innerHTML =
-    strip + faith + `<span class="res"><b>👥${Math.floor(g.pop)}/${g.popCap()}</b></span><span class="res"><b>🛡️${g.defense()}</b></span>`;
+    strip + faith + `<span class="res"><b>${icon('pop')}${Math.floor(g.pop)}/${g.popCap()}</b></span><span class="res"><b>${icon('defense')}${g.defense()}</b></span>`;
 }
 
 // resourceBreakdown lists what each work adds/eats for one resource per second.

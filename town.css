@@ -24,6 +24,8 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #0d1014; }
   background: rgba(8,10,13,.55); padding: 4px 9px; border-radius: 7px; text-shadow: 0 1px 3px #000; }
 .res i { font-style: normal; font-size: 11px; color: var(--dim); }
 .res i.up { color: #8fd39b; } .res i.down { color: var(--bad); }
+.ricon { width: 15px; height: 15px; image-rendering: pixelated; vertical-align: -2px; }
+.ricon.sm { width: 13px; height: 13px; vertical-align: -1px; }
 
 /* chronicle box, bottom-left */
 #chroniclebox { align-self: flex-start; margin: 0 0 8px 18px; max-width: min(560px, 60vw);
