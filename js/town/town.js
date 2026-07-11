@@ -604,7 +604,7 @@ function spawnVillager() {
 
 function despawnVillager() {
   const v = S.villagers.pop();
-  if (v) { entities.removeChild(v); v.destroy({ children: true }); }
+  if (v) { releaseClaim(v); entities.removeChild(v); v.destroy({ children: true }); }
 }
 
 function randomTownPoint() {
@@ -612,6 +612,13 @@ function randomTownPoint() {
   const used = [...S.usedPlots].filter((k) => k !== S.keepKey).map((k) => k.split(',').map(Number));
   const p = used.length ? used[(Math.random() * used.length) | 0] : [S.plots[1].px, S.plots[1].py];
   return { x: (p[0] * PLOT + 1 + Math.random() * 2) * TILE, y: (p[1] * PLOT + 1 + Math.random() * 2) * TILE };
+}
+
+// A worker holds a claim on the single exhaustible node (a tree) it's walking
+// to or toiling — release it so no other woodcutter targets the same trunk.
+function releaseClaim(v) {
+  const n = v.workNode || v.targetNode;
+  if (n && n.claimedBy === v) n.claimedBy = null;
 }
 
 function pickTarget(v) {
@@ -627,8 +634,14 @@ function pickTarget(v) {
   // spawned or just dropped a load off.
   const cfg = CARRY[v.role];
   if (cfg) {
+    releaseClaim(v);                       // drop any node we were holding
     const node = nearestNode(v.x, v.y, cfg.nodeType);
-    if (node) { v.tx = node.x; v.ty = node.y; v.targetNode = node; }
+    if (node) {
+      v.tx = node.x; v.ty = node.y; v.targetNode = node;
+      // Exhaustible nodes (trees) are one-worker: claim it so the next idle
+      // woodcutter skips it and the phantom-chop double-log can't happen.
+      if (cfg.exhaustible) node.claimedBy = v;
+    }
     else { const t = randomTownPoint(); v.tx = t.x; v.ty = t.y; v.targetNode = null; }
     v.moving = true; return;
   }
@@ -636,8 +649,11 @@ function pickTarget(v) {
 }
 
 function nearestNode(px, py, type) {
-  // A claimed ore node has a mine standing on it now — not a vein to work.
-  const list = type === 'ore' ? S.oreNodes.filter((n) => !n.claimedByMine) : S.woodNodes;
+  // A claimed ore node has a mine standing on it now — not a vein to work;
+  // a claimed wood node already has a woodcutter felling it.
+  const list = type === 'ore'
+    ? S.oreNodes.filter((n) => !n.claimedByMine)
+    : S.woodNodes.filter((n) => !n.claimedBy);
   let best = null, bd = Infinity;
   for (const n of list) { const d = (n.x - px) ** 2 + (n.y - py) ** 2; if (d < bd) { bd = d; best = n; } }
   return best;
