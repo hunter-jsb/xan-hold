@@ -2040,8 +2040,14 @@ function updateHUD() {
     const hex = '#' + ROLE_PIP[r].toString(16).padStart(6, '0');
     return `<div class="lg"><span class="dot" style="background:${hex}"></span>${label}<b>${counts[r] || 0}</b></div>`;
   }).join('');
+  // Housing: what raises the people cap (base hearth + tier, then longhouses),
+  // so the folk cap is legible right under the Pop count.
+  const hb = g.popCapBreakdown();
+  const hbDetail = hb.contributors.map((c) => `${c.name} ×${c.count} +${c.add}`).join(' · ');
+  const houseFoot = `<div class="chip-foot"><span>${icon('pop', 'sm')} housing cap</span><b>${hb.total}</b></div>`
+    + `<div class="chip-cap">base ${hb.base}${hb.contributors.length ? ' · ' + hbDetail : ''} → ${hb.total}</div>`;
   const defFoot = `<div class="chip-foot"><span>${icon('defense', 'sm')} defense</span><b>${g.defense()}</b></div>`;
-  const popChip = chip('pop', `${icon(CAT_ICON.pop)}${Math.floor(g.pop)}/${g.popCap()}`, folk + defFoot);
+  const popChip = chip('pop', `${icon(CAT_ICON.pop)}${Math.floor(g.pop)}/${g.popCap()}`, folk + houseFoot + defFoot);
 
   // Faith: a meter toward the Will's next invocation, not a tradeable good —
   // its own chip (not under Pop) because the speaker COUNT that fills it is

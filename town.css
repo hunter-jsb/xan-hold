@@ -50,6 +50,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #0d1014; }
   font-size: 12px; color: var(--dim); margin-top: 3px; padding-top: 4px;
   border-top: 1px solid rgba(255,255,255,.15); }
 .chip-foot b { color: var(--ink); font-weight: 600; }
+.chip-cap { font-size: 11px; color: var(--dim); margin-top: 2px; } /* housing/cap breakdown line */
 
 
 /* hover-to-identify building tooltip (follows the cursor) */

@@ -205,6 +205,16 @@ class Game {
     return cap;
   }
 
+  // popCapBreakdown — the people-cap math behind popCap(), split per housing
+  // source so the Pop panel can show what raises the cap (base + longhouses).
+  popCapBreakdown() {
+    const base = 8 + this.bon.popCapBonus;   // hearth + tier (a capital seats more)
+    const contributors = [];
+    const lh = this.level('longhouse');
+    if (lh > 0) contributors.push({ id: 'longhouse', name: BY_ID.longhouse.name, count: lh, add: lh * BY_ID.longhouse.pop });
+    return { base, contributors, total: this.popCap() };
+  }
+
   defense() { return this.level('palisade') * BY_ID.palisade.def + this.bon.defBonus; }
 
   // speakers — how many voices the hold's shrines give the fallen god: one
