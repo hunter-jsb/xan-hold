@@ -41,8 +41,8 @@ const RECIPES = {
     { i: 36, x: 0, y: 1 }, { i: 38, x: 1, y: 1 },
     { i: 116, x: 1, y: 1 },
   ] },
-  // The market is Kenney's little trade cart.
-  market: { w: 1, h: 1, tiles: [{ i: 57, x: 0, y: 0 }] },
+  // The market is a cozy pixel-art merchant shop with striped awning.
+  market: { w: 1.5, h: 3, image: 'market' },
   // The reliquary is a whole-image sprite (a church), not tiles. w drives its
   // on-screen size (scale = w*TILE / image width) — 2 = about half of 4.
   reliquary: { w: 2, h: 3, image: 'church' },
@@ -120,7 +120,10 @@ export async function loadAtlas() {
   // downscale from its high-res art to a few tiles wide.
   const churchTex = await Assets.load('/assets/buildings/church.png');
   churchTex.source.scaleMode = 'linear';
-  const images = { church: churchTex };
+  // The merchant shop — pixel art, so nearest-neighbor scale.
+  const marketTex = await Assets.load('/assets/buildings/market.png');
+  marketTex.source.scaleMode = 'nearest';
+  const images = { church: churchTex, market: marketTex };
 
   // Crop tiles for farm fields (ArMM overworld, CC0). Tilled-dirt based, so
   // they sit inside a Kenney grass-edged border and never touch grass directly
