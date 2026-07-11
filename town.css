@@ -132,6 +132,47 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #0d1014; }
 .pbar { height: 3px; background: rgba(255,255,255,.16); border-radius: 2px; margin-top: 3px; overflow: hidden; }
 .pbar i { display: block; height: 100%; background: var(--gold); border-radius: 2px; transition: width .25s linear; }
 
+/* generic scrollable popout (ui.js makePopout) — a dimmed backdrop behind a
+   centred, title-barred card; the body scrolls. Reused by any HUD panel that
+   wants a "click for the full story" layer — kept content-agnostic here. */
+.popout-bg { position: fixed; inset: 0; z-index: 50;
+  align-items: center; justify-content: center;
+  background: rgba(8,10,13,.72); pointer-events: auto; }
+.popout { width: min(560px, 88vw); display: flex; flex-direction: column;
+  background: rgba(14,16,20,.96); border: 1px solid rgba(255,212,121,.35); border-radius: 10px;
+  box-shadow: 0 8px 30px rgba(0,0,0,.5); color: var(--ink); font-family: var(--mono); }
+.popout-bar { display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 14px; border-bottom: 1px solid rgba(255,212,121,.25); flex: 0 0 auto; }
+.popout-t { font-family: var(--serif); font-size: 15px; color: var(--gold); letter-spacing: .02em; }
+.popout-x { background: none; border: none; color: var(--dim); font-size: 15px; line-height: 1;
+  cursor: pointer; padding: 3px 7px; border-radius: 5px; }
+.popout-x:hover { color: var(--ink); background: rgba(255,255,255,.1); }
+.popout-b { overflow-y: auto; max-height: 70vh; padding: 12px 14px; font-size: 12px; line-height: 1.5;
+  scrollbar-width: thin; scrollbar-color: rgba(255,212,121,.35) transparent; }
+.popout-b::-webkit-scrollbar { width: 8px; }
+.popout-b::-webkit-scrollbar-track { background: transparent; }
+.popout-b::-webkit-scrollbar-thumb { background: rgba(255,212,121,.3); border-radius: 4px; }
+.popout-b::-webkit-scrollbar-thumb:hover { background: rgba(255,212,121,.5); }
+
+/* the left Will panel opts back into pointer-events to be clickable — a
+   subtle hover-only affordance (glow + a small corner tag) since the
+   compact panel's own content stays exactly as-is (still the quick glance). */
+#region-l .panel.clickable { position: relative; pointer-events: auto; cursor: pointer;
+  transition: box-shadow .15s; }
+#region-l .panel.clickable:hover { box-shadow: 0 0 0 1px rgba(255,212,121,.4), 0 2px 10px rgba(0,0,0,.35); }
+#region-l .panel.clickable::after { content: '⤢ the full telling'; position: absolute; top: 8px; right: 12px;
+  font-size: 10px; color: var(--dim); opacity: 0; transition: opacity .15s; }
+#region-l .panel.clickable:hover::after { opacity: .85; }
+
+/* Will popout detail (renderWillDetail) — every kept invocation, unabridged
+   (parish + full word + all order chips), then the whole chronicle. Reuses
+   sp-*/ordchip/cl from the compact panel so the two views stay visually one
+   family; wd-* below is just the extra structure the compact view trims. */
+.wd-inv + .wd-inv { margin-top: 14px; padding-top: 14px; border-top: 1px solid rgba(255,212,121,.18); }
+.wd-time { font-size: 10px; margin-bottom: 3px; }
+.wd-word { color: var(--dim); font-style: italic; margin: 3px 0 5px; padding-left: 1px; }
+.wd-chron-t { font-family: var(--serif); color: var(--gold); font-size: 13px; margin-top: 10px; }
+
 /* legend rows with counts */
 .lg { display: flex; align-items: center; gap: 8px; padding: 2px 0; }
 .lg b { margin-left: auto; color: var(--ink); font-weight: 600; }
