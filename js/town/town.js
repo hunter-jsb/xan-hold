@@ -42,7 +42,7 @@ const S = {
   villagers: [], plots: [], usedPlots: new Set(),
   orderLog: [], focus: null, chronicle: [],
   stewardBusy: false, lastRaidTally: 0, alarm: 0,
-  hudOn: true, ui: {},
+  hudOn: true, ui: { pinned: new Set() }, // ui.pinned: category keys clicked open (see chip() in updateHUD)
   cam: { x: TOWN_W / 2, y: TOWN_H / 2 }, camAuto: true, lastInput: 0,
   hittable: [], // building bounds for hover-identify
   palisadeSprites: [], palisadeSig: null,
@@ -1060,8 +1060,7 @@ function townTick() {
   }
   setTimeout(() => { S.lastRaidTally = rt; }, 2500);
   renderOrders();
-  renderLegend();
-  updateHUD();
+  updateHUD(); // folds the Folk legend + defense into the Pop chip now
 }
 
 function reconcileVillagers() {
@@ -1287,10 +1286,24 @@ const RES_ICON = {
   food: icon('food'), timber: icon('timber'), stone: icon('stone'), ore: icon('ore'),
   salt: icon('salt'), coin: icon('coin'), faith: icon('faith'),
 };
-// CAT_ICON: resource-key → icon name for the upcoming category-chips HUD
-// refactor (grouping resources under food/mats/ore/trade/money/pop/faith
-// chips instead of a flat strip). Not consumed yet — wiring ahead of time.
+// CAT_ICON: resource-key → icon name for the category-chips HUD (grouping
+// resources under food/mats/ore/trade/money/pop/faith chips).
 const CAT_ICON = { food: 'food', mats: 'mats', ore: 'ore', trade: 'trade', money: 'coin', pop: 'pop', faith: 'faith' };
+// CATEGORIES: chip key → member resource keys. One data map drives the whole
+// #resstrip — adding a resource to an existing category, or a new category,
+// is a one-liner here (pop + faith are special-cased in updateHUD instead,
+// since they aren't plain .res entries).
+const CATEGORIES = {
+  food:  ['food'],              // + future grain/fish/meat
+  mats:  ['timber', 'stone'],
+  ore:   ['ore'],                // + future coal/copper/iron/gold ("Metals")
+  trade: ['salt'],               // strategic goods (+ future)
+  money: ['coin'],
+  // Reserved for later — leave as commented stubs so adding them is trivial:
+  //   crafted:  ['steel','cloth'],
+  //   luxuries: ['wine','amber','furs'],
+  //   lore:     ['lore'],
+};
 function initHUD(away) {
   document.getElementById('hname').textContent = S.hold.name;
   document.getElementById('hsub').textContent =
@@ -1298,26 +1311,82 @@ function initHUD(away) {
   if (away && away.raids) pushChronicle(`While you were away, raiders came ${away.raids}×.`, 'raid');
   pushChronicle(`${S.hold.name} wakes to another day.`, 'note');
   S.ui.orders = makePanel({ region: 'tr', title: 'Works Bidden' });
-  S.ui.legend = makePanel({ region: 'br', title: 'Folk' });
-  renderLegend();
   renderOrders();
   updateHUD();
   initResTip();
+  initChipToggle();
   initStewardAsk();
+}
+
+// resRow renders one member resource as an icon + count + net-rate — the
+// same markup the old flat strip used (class="res" data-res="k"), so
+// initResTip's hover breakdown keeps working unchanged on these rows.
+function resRow(g, rate, k) {
+  let net = rate[k]; if (k === 'food') net -= g.foodEatPerS();
+  const cls = net > 0.01 ? 'up' : net < -0.01 ? 'down' : '';
+  return `<span class="res" data-res="${k}"><b>${RES_ICON[k]}${Math.floor(g.res[k])}</b><i class="${cls}">${net >= 0 ? '+' : ''}${net.toFixed(1)}</i></span>`;
+}
+
+// chip renders one collapsible category chip: a collapsed head (icon + the
+// sum of its members, floored) and a hover/pin-revealed expand panel listing
+// each member's own icon/count/rate.
+function chip(cat, headHTML, expandHTML) {
+  const pinned = S.ui.pinned.has(cat) ? ' pinned' : '';
+  return `<div class="chip${pinned}" data-cat="${cat}">
+    <div class="chip-head"><b>${headHTML}</b></div>
+    <div class="chip-expand">${expandHTML}</div>
+  </div>`;
 }
 
 function updateHUD() {
   const g = S.game, rate = g.rates();
-  const strip = window.XAN.RESOURCES.map((k) => {
-    let net = rate[k]; if (k === 'food') net -= g.foodEatPerS();
-    const cls = net > 0.01 ? 'up' : net < -0.01 ? 'down' : '';
-    return `<span class="res" data-res="${k}"><b>${RES_ICON[k]}${Math.floor(g.res[k])}</b><i class="${cls}">${net >= 0 ? '+' : ''}${net.toFixed(1)}</i></span>`;
+  const catChips = Object.entries(CATEGORIES).map(([cat, members]) => {
+    const total = members.reduce((a, m) => a + Math.floor(g.res[m]), 0);
+    return chip(cat, `${icon(CAT_ICON[cat])}${total}`, members.map((m) => resRow(g, rate, m)).join(''));
   }).join('');
-  // Faith is a meter toward the Will's next invocation, not a tradeable good —
-  // shown as current/threshold (like pop's current/cap), not a flow.
-  const faith = `<span class="res" data-res="faith"><b>${RES_ICON.faith}${Math.floor(g.faith)}/${g.faithThreshold()}</b></span>`;
-  document.getElementById('resstrip').innerHTML =
-    strip + faith + `<span class="res"><b>${icon('pop')}${Math.floor(g.pop)}/${g.popCap()}</b></span><span class="res"><b>${icon('defense')}${g.defense()}</b></span>`;
+
+  // Pop: population as a resource. Expand folds in the Folk legend (per-role
+  // counts, formerly its own bottom-right panel — retired so it doesn't
+  // double-render) plus a derived defense footer (the old standalone defense
+  // chip lives here now, since defense is a property of your folk, not a
+  // tradeable good).
+  const counts = {};
+  for (const v of S.villagers) counts[v.role] = (counts[v.role] || 0) + 1;
+  const folk = Object.entries(ROLE_LABEL).map(([r, label]) => {
+    const hex = '#' + ROLE_PIP[r].toString(16).padStart(6, '0');
+    return `<div class="lg"><span class="dot" style="background:${hex}"></span>${label}<b>${counts[r] || 0}</b></div>`;
+  }).join('');
+  const defFoot = `<div class="chip-foot"><span>${icon('defense', 'sm')} defense</span><b>${g.defense()}</b></div>`;
+  const popChip = chip('pop', `${icon(CAT_ICON.pop)}${Math.floor(g.pop)}/${g.popCap()}`, folk + defFoot);
+
+  // Faith: a meter toward the Will's next invocation, not a tradeable good —
+  // its own chip (not under Pop) because the speaker COUNT that fills it is
+  // shown here, while the speaker ROLE is separately listed under Pop; a
+  // speaker is both a person and the source of faith.
+  const faithLines = resourceBreakdown('faith');
+  const faithRows = faithLines.map((l) =>
+    `<div class="chip-row"><span>${l.label}</span><b class="${l.val >= 0 ? 'up' : 'down'}">${l.val >= 0 ? '+' : ''}${l.val.toFixed(1)}</b></div>`
+  ).join('');
+  const faithFoot = `<div class="chip-foot"><span>threshold</span><b>${Math.floor(g.faith)}/${g.faithThreshold()}</b></div>`;
+  const faithChip = chip('faith', `${icon(CAT_ICON.faith)}${Math.floor(g.faith)}/${g.faithThreshold()}`, faithRows + faithFoot);
+
+  document.getElementById('resstrip').innerHTML = catChips + popChip + faithChip;
+}
+
+// initChipToggle: clicking a chip's collapsed head pins it open (toggle);
+// hover-preview (CSS-only, see .chip:hover in town.css) keeps working
+// regardless of pin state. #resstrip's innerHTML is fully rebuilt every
+// tick, so pinned state lives in S.ui.pinned, not on the DOM nodes.
+function initChipToggle() {
+  const bar = document.getElementById('resstrip');
+  if (!bar) return;
+  bar.addEventListener('click', (e) => {
+    const head = e.target.closest && e.target.closest('.chip-head');
+    if (!head) return;
+    const cat = head.closest('.chip').dataset.cat;
+    if (S.ui.pinned.has(cat)) S.ui.pinned.delete(cat); else S.ui.pinned.add(cat);
+    updateHUD();
+  });
 }
 
 // resourceBreakdown lists what each work adds/eats for one resource per second.
@@ -1362,16 +1431,9 @@ function initResTip() {
   bar.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
 }
 
-// ---- legend + order log --------------------------------------------
-function renderLegend() {
-  if (!S.ui.legend) return;
-  const counts = {};
-  for (const v of S.villagers) counts[v.role] = (counts[v.role] || 0) + 1;
-  S.ui.legend.set(Object.entries(ROLE_LABEL).map(([r, label]) => {
-    const hex = '#' + ROLE_PIP[r].toString(16).padStart(6, '0');
-    return `<div class="lg"><span class="dot" style="background:${hex}"></span>${label}<b>${counts[r] || 0}</b></div>`;
-  }).join(''));
-}
+// ---- order log --------------------------------------------------------
+// (the Folk legend used to be its own bottom-right panel here; it's now
+// rendered inline inside the Pop chip's expand — see updateHUD.)
 
 function orderText(o) {
   if (o.type === 'build') return `build ${o.target}${o.qty > 1 ? ' ×' + o.qty : ''}`;
