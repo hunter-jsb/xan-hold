@@ -48,6 +48,10 @@ const S = {
   palisadeSprites: [], palisadeSig: null,
   oreNodes: [], woodNodes: [], // resource nodes the folk walk out to work
   mask: { aspect: 'the Will', speakers: 'Speakers' }, // the god's local face, set from tier at boot
+  // Hover-highlight state (seed of the jobs system's assignment viz — see
+  // resolveHome/startHaul for v.home/v.haulTarget): the hittable currently
+  // hovered, its outline, and the ring per assigned villager it's showing.
+  hoverBuilding: null, hoverGfx: null, highlightRings: new Map(), highlightAt: 0,
 };
 const heldKeys = new Set(); // WASD currently pressed
 const BUILD_NAME = {
@@ -595,8 +599,10 @@ function spawnVillager() {
     v.addChild(pip);
   }
   v.role = role; v.dir = 'down'; v.moving = false; v.idle = 0;
+  v.home = null; v.haulTarget = null; // assignment model seed (see resolveHome above)
   const start = randomTownPoint();
   v.x = start.x; v.y = start.y; v.zIndex = v.y;
+  resolveHome(v);
   pickTarget(v);
   entities.addChild(v);
   S.villagers.push(v);
@@ -604,7 +610,12 @@ function spawnVillager() {
 
 function despawnVillager() {
   const v = S.villagers.pop();
-  if (v) { releaseClaim(v); entities.removeChild(v); v.destroy({ children: true }); }
+  if (!v) return;
+  releaseClaim(v);
+  v.haulTarget = null; v.home = null;
+  const rec = S.highlightRings.get(v); // don't leak a ring for a villager that's gone
+  if (rec) { entities.removeChild(rec.gfx); rec.gfx.destroy(); S.highlightRings.delete(v); }
+  entities.removeChild(v); v.destroy({ children: true });
 }
 
 function randomTownPoint() {
@@ -676,17 +687,34 @@ function workEffect(node) {
   }
 }
 
-// nearestBuilding returns the pixel centre of the closest placed building of
-// `type` (sawmill, mine…), or null — where a hauling worker's home lies.
+// nearestBuilding returns the pixel centre AND S.hittable entry (`ref`) of the
+// closest placed building of `type` (sawmill, mine, reliquary…), or null.
+// `ref` is what an assignment (v.home / v.haulTarget) points at.
 function nearestBuilding(type, px, py) {
   let best = null, bd = Infinity;
   for (const h of S.hittable) {
     if (h.type !== type) continue;
     const cx = ((h.x0 + h.x1) / 2) * TILE, cy = ((h.y0 + h.y1) / 2) * TILE;
     const d = (cx - px) ** 2 + (cy - py) ** 2;
-    if (d < bd) { bd = d; best = { x: cx, y: cy }; }
+    if (d < bd) { bd = d; best = { x: cx, y: cy, ref: h }; }
   }
   return best;
+}
+
+// ---- assignment model (seed of the jobs system) ----------------------
+// Two assignment kinds exist today: v.home is PERMANENT (a speaker linked to
+// its reliquary) and v.haulTarget is TEMPORARY (a hauler's current delivery
+// building) — both plain references into S.hittable. Build/upgrade/repair
+// jobs will slot in alongside these as the jobs system grows.
+//
+// resolveHome links a speaker to the nearest reliquary. Called at spawn and
+// again each reconcileVillagers() pass (cheap — early-returns once linked),
+// so a speaker picks one up lazily the moment a reliquary is first built.
+function resolveHome(v) {
+  if (v.role !== 'speaker') { v.home = null; return; }
+  if (v.home) return; // already linked
+  const h = nearestBuilding('reliquary', v.x, v.y);
+  v.home = h ? h.ref : null; // no reliquary yet — retried next reconcile
 }
 
 // fellTree clears a felled wood node: destroy its tree sprites, drop it from
@@ -742,6 +770,7 @@ function startHaul(v, cfg, node) {
   s.anchor.set(0.5, 1); s.scale.set(cfg.scale); s.x = cfg.dx; s.y = cfg.dy;
   v.addChild(s); v.carrySprite = s; v.hauling = true;
   const home = nearestBuilding(cfg.building, v.x, v.y);
+  v.haulTarget = home ? home.ref : null; // TEMP assignment — cleared on deliver/despawn
   const t = home || randomTownPoint();
   v.tx = t.x; v.ty = t.y; v.targetNode = null; v.moving = true;
 }
@@ -749,6 +778,7 @@ function startHaul(v, cfg, node) {
 function deliverCommodity(v) {
   if (v.carrySprite) { v.removeChild(v.carrySprite); v.carrySprite.destroy(); v.carrySprite = null; }
   v.hauling = false;
+  v.haulTarget = null; // delivered — the temp assignment ends
 }
 
 // The forest recovers: every so often a fresh sapling (and its wood node)
@@ -826,6 +856,16 @@ function makeOverlay(color) {
 function onFrame(ticker) {
   const dt = Math.min(0.1, ticker.deltaMS / 1000);
   for (const v of S.villagers) stepVillager(v, dt);
+  // hover highlight rings: perma (v.home) vs temp (v.haulTarget) assignees of
+  // S.hoverBuilding — only exist while hovering (see setHoverBuilding).
+  if (S.hoverBuilding) refreshHighlights(Date.now());
+  if (S.highlightRings.size) {
+    const pulse = 0.55 + 0.35 * Math.sin(performance.now() / 260); // temp's "in transit" breathe
+    for (const [v, rec] of S.highlightRings) {
+      rec.gfx.x = v.x; rec.gfx.y = v.y; rec.gfx.zIndex = v.y - 0.5; // just under the villager's feet
+      if (rec.kind === 'temp') rec.gfx.alpha = pulse;
+    }
+  }
   // camera: WASD nudges it; otherwise a slow auto-tour that resumes ~12s
   // after you stop steering (drag is handled in initPan).
   if (heldKeys.size) {
@@ -892,17 +932,73 @@ function buildingAt(cx, cy) {
   }
   return hit;
 }
-// hoverIdentify shows a small label for the building under the cursor.
+// hoverIdentify shows a small label for the building under the cursor, and
+// (via setHoverBuilding) drives the assigned-villager highlight rings.
 function hoverIdentify(e) {
+  const h = buildingAt(e.clientX, e.clientY);
+  if (h !== S.hoverBuilding) setHoverBuilding(h);
   const tip = document.getElementById('btip');
   if (!tip) return;
-  const h = buildingAt(e.clientX, e.clientY);
   if (!h) { tip.style.display = 'none'; return; }
   let text = h.label || BUILD_NAME[h.type] || h.type;
   if (h.type) { const lv = S.game.level(h.type); if (lv) text += ' · lvl ' + lv; }
   tip.textContent = text;
   tip.style.left = e.clientX + 'px'; tip.style.top = e.clientY + 'px';
   tip.style.display = 'block';
+}
+
+// ---- hover highlight (perma vs temp assignees) -----------------------
+const HIGHLIGHT_COLOR = { perma: 0xffd23a, temp: 0x38d6ff }; // gold = home, cyan = in transit
+// makeHighlightRing draws the small ground ring under a highlighted
+// villager's feet — perma is a steady solid-gold ring, temp a lighter cyan
+// one whose alpha gets pulsed each frame in onFrame.
+function makeHighlightRing(kind) {
+  const g = kind === 'perma'
+    ? new Graphics().ellipse(0, 0, 8, 3.5).fill({ color: HIGHLIGHT_COLOR.perma, alpha: 0.32 }).stroke({ width: 1.4, color: 0xffe27a, alpha: 0.95 })
+    : new Graphics().ellipse(0, 0, 7, 3).fill({ color: HIGHLIGHT_COLOR.temp, alpha: 0.55 }).stroke({ width: 1, color: 0xbdf3ff, alpha: 0.9 });
+  entities.addChild(g);
+  return g;
+}
+
+// clearHighlightRings tears down every ring — the only cleanup path, so
+// highlights never outlive a hover (called on every hover change/clear).
+function clearHighlightRings() {
+  for (const rec of S.highlightRings.values()) { entities.removeChild(rec.gfx); rec.gfx.destroy(); }
+  S.highlightRings.clear();
+}
+
+// refreshHighlights (re)builds the ring set for S.hoverBuilding's assigned
+// villagers. Throttled to ~200ms — temp (hauling) assignees turn over as
+// workers come and go, so this is re-run periodically, not every frame.
+function refreshHighlights(now) {
+  if (now - S.highlightAt < 200) return;
+  S.highlightAt = now;
+  const hb = S.hoverBuilding, want = new Map();
+  if (hb) for (const v of S.villagers) {
+    if (v.home === hb) want.set(v, 'perma');
+    else if (v.haulTarget === hb) want.set(v, 'temp');
+  }
+  for (const [v, rec] of S.highlightRings) {          // drop stale/changed-kind rings
+    if (want.get(v) !== rec.kind) { entities.removeChild(rec.gfx); rec.gfx.destroy(); S.highlightRings.delete(v); }
+  }
+  for (const [v, kind] of want) {                      // add newly-assigned villagers
+    if (!S.highlightRings.has(v)) S.highlightRings.set(v, { kind, gfx: makeHighlightRing(kind) });
+  }
+}
+
+// setHoverBuilding swaps the hovered building: redraws its subtle outline and
+// tears down old rings immediately (refreshHighlights repopulates them next
+// frame — S.highlightAt is reset so the throttle doesn't delay it).
+function setHoverBuilding(h) {
+  if (S.hoverGfx) { ground.removeChild(S.hoverGfx); S.hoverGfx.destroy(); S.hoverGfx = null; }
+  S.hoverBuilding = h;
+  clearHighlightRings();
+  S.highlightAt = 0;
+  if (h) {
+    const x0 = h.x0 * TILE, y0 = h.y0 * TILE, w = (h.x1 - h.x0) * TILE, ht = (h.y1 - h.y0) * TILE;
+    S.hoverGfx = new Graphics().rect(x0, y0, w, ht).stroke({ width: 2, color: 0xfff3c0, alpha: 0.55 });
+    ground.addChild(S.hoverGfx);
+  }
 }
 
 function initPan() {
@@ -927,7 +1023,7 @@ function initPan() {
   const end = () => { drag = null; el.style.cursor = 'grab'; };
   el.addEventListener('pointerup', end);
   el.addEventListener('pointercancel', end);
-  el.addEventListener('pointerleave', () => { const t = document.getElementById('btip'); if (t) t.style.display = 'none'; });
+  el.addEventListener('pointerleave', () => { const t = document.getElementById('btip'); if (t) t.style.display = 'none'; setHoverBuilding(null); });
   addEventListener('keydown', (e) => { if (e.target && e.target.tagName === 'INPUT') return; const k = e.key.toLowerCase(); if (k === 'w' || k === 'a' || k === 's' || k === 'd') heldKeys.add(k); });
   addEventListener('keyup', (e) => heldKeys.delete(e.key.toLowerCase()));
   addEventListener('blur', () => heldKeys.clear()); // don't let a key stick when focus leaves
@@ -972,6 +1068,7 @@ function reconcileVillagers() {
   const want = Math.min(70, Math.max(3, Math.floor(S.game.pop)));
   while (S.villagers.length < want) spawnVillager();
   while (S.villagers.length > want) despawnVillager();
+  for (const v of S.villagers) resolveHome(v); // re-link speakers as roles/buildings change
 }
 
 // pushOrder appends a decree to the log as pending work.
