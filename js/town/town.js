@@ -33,7 +33,7 @@ const ROLE_PIP = {
 const ROLE_LABEL = { villager: 'Villager', farmer: 'Farmer', woodcutter: 'Woodcutter', miner: 'Miner', soldier: 'Soldier', trader: 'Trader', speaker: 'Speaker' };
 // Seconds of work a single unit of each order takes — so decrees are
 // carried out over time (a build you can watch), not the instant they land.
-const WORK_S = { build: 5, trade: 2.5, focus: 1, expand: 5 };
+const WORK_S = { build: 5, trade: 2.5, focus: 1, expand: 5, wall: 5 };
 
 // ---- state ----------------------------------------------------------
 const S = {
@@ -46,7 +46,13 @@ const S = {
   hudOn: true, ui: { pinned: new Set() }, // ui.pinned: category keys clicked open (see chip() in updateHUD)
   cam: { x: TOWN_W / 2, y: TOWN_H / 2 }, camAuto: true, lastInput: 0,
   hittable: [], // building bounds for hover-identify
-  palisadeSprites: [], palisadeSig: null,
+  // Real, planned walls: a set of wall tiles (impassable) and gate tiles
+  // (passable openings), keyed "x,y" — grown by wall ORDERS (see the 'wall'
+  // case in advanceOrder), never an auto-fitted bounding-box ring. See the
+  // "---- walls ----" section below.
+  walls: new Set(), gates: new Set(),
+  wallSprites: [], wallsVersion: 0, wallsRendered: -1,
+  wallEdgesBuilt: new Set(), // which sides of the settlement localSteward has already planned (see planDefensiveSegment)
   oreNodes: [], woodNodes: [], // resource nodes the folk walk out to work
   mask: { aspect: 'the Will', speakers: 'Speakers' }, // the god's local face, set from tier at boot
   lastWill: null, // last invocation: {utterance, aspect, speakers:[{name,parish,directive,word,orders}]} — powers the left Speakers panel
@@ -110,6 +116,7 @@ async function boot() {
   S.hold = pickHold();
   S.mask = holdMask(S.hold);                         // the god's local face
   ROLE_LABEL.speaker = S.mask.speakers.replace(/s$/, ''); // e.g. "Deepspeaker" in the Folk legend
+  loadWalls();                                        // restore this hold's grown wall/gate tiles (see saveWalls)
   S.game = Game.load(S.hold);
   const away = S.game.catchUp();
 
@@ -433,7 +440,7 @@ function reconcileBuildings() {
     }
   }
   reconcileFarms();
-  updatePalisade();
+  renderWalls();
 }
 
 // Farms are individual fields (game.farmPlots), each with a size and crop.
@@ -580,33 +587,118 @@ function fadeIn(c) {
   requestAnimationFrame(tick);
 }
 
-// updatePalisade fences the BUILT settlement (the bounding box of its plots
-// with a 1-tile margin) — not the whole map — and redraws it larger as the
-// town expands, so the wall reflects the town's actual footprint.
-function updatePalisade() {
-  if (!S.game.level('palisade')) return;
-  let minX = 1e9, minY = 1e9, maxX = -1e9, maxY = -1e9;
-  for (const key of S.usedPlots) {
-    const [px, py] = key.split(',').map(Number);
-    minX = Math.min(minX, px * PLOT); minY = Math.min(minY, py * PLOT);
-    maxX = Math.max(maxX, (px + 1) * PLOT - 1); maxY = Math.max(maxY, (py + 1) * PLOT - 1);
+// ---- walls ------------------------------------------------------------
+// Real, planned construction: S.walls/S.gates are sets of grid tiles, grown
+// piecemeal by wall ORDERS (see the 'wall' case in advanceOrder) that lay a
+// straight segment and/or carve a gate. Nothing here computes a bounding box
+// or resizes a ring — segments only ever ACCUMULATE. Wall tiles are
+// impassable, gate tiles are passable (see findPath), and both render from
+// the same fence atlas the old auto-ring used.
+const wallKey = (x, y) => `${x},${y}`;
+const clampX = (x) => Math.max(0, Math.min(TOWN_W - 1, Math.round(x)));
+const clampY = (y) => Math.max(0, Math.min(TOWN_H - 1, Math.round(y)));
+
+// Wall/gate tiles are grown by orders over real time, unlike the old ring
+// (which was rederived every tick purely from the town's plot bounds + a
+// level number) — so unlike that ring, they need their OWN save, a sibling
+// of the economy's `xanhold:<id>` key (same "xanhold:" prefix, so `R` /
+// resetWorld's wipe already covers it for free).
+function wallsSaveKey() { return 'xanhold:' + S.hold.id + ':walls'; }
+function saveWalls() {
+  try {
+    localStorage.setItem(wallsSaveKey(), JSON.stringify({
+      walls: [...S.walls], gates: [...S.gates], edges: [...S.wallEdgesBuilt],
+    }));
+  } catch { /* private/sandboxed storage — walls just won't survive a reload */ }
+}
+function loadWalls() {
+  try {
+    const raw = localStorage.getItem(wallsSaveKey());
+    if (!raw) return;
+    const d = JSON.parse(raw);
+    S.walls = new Set(d.walls || []); S.gates = new Set(d.gates || []); S.wallEdgesBuilt = new Set(d.edges || []);
+  } catch { /* corrupt or sandboxed — start with a clean slate */ }
+}
+
+// layWallSegment adds every tile on the straight line from `from` to `to`
+// (inclusive) to S.walls, carving a gate at `gate` if given (that one tile
+// becomes passable + drawn as an opening instead of fence). Only ever lays
+// straight (axis-aligned) runs — a diagonal from an LLM-authored order is
+// snapped to its dominant axis so the tile-by-tile walk below terminates.
+function layWallSegment(from, to, gate) {
+  from = { x: clampX(from.x), y: clampY(from.y) };
+  to = { x: clampX(to.x), y: clampY(to.y) };
+  if (from.x !== to.x && from.y !== to.y) {
+    to = Math.abs(to.x - from.x) >= Math.abs(to.y - from.y) ? { x: to.x, y: from.y } : { x: from.x, y: to.y };
   }
-  if (minX > maxX) return;
-  const x0 = Math.max(0, minX - 1), y0 = Math.max(0, minY - 1);
-  const x1 = Math.min(TOWN_W - 1, maxX + 1), y1 = Math.min(TOWN_H - 1, maxY + 1);
-  const sig = `${x0},${y0},${x1},${y1}`;
-  if (sig === S.palisadeSig) return;         // footprint unchanged — keep the wall
-  S.palisadeSig = sig;
-  for (const s of S.palisadeSprites) { entities.removeChild(s); s.destroy(); }
-  S.palisadeSprites = [];
+  const dx = Math.sign(to.x - from.x), dy = Math.sign(to.y - from.y);
+  const g = gate ? { x: clampX(gate.x), y: clampY(gate.y) } : null;
+  let x = from.x, y = from.y, guard = 0;
+  while (guard++ <= TOWN_W + TOWN_H) {
+    if (g && g.x === x && g.y === y) { S.walls.delete(wallKey(x, y)); S.gates.add(wallKey(x, y)); }
+    else { S.gates.delete(wallKey(x, y)); S.walls.add(wallKey(x, y)); }
+    if (x === to.x && y === to.y) break;
+    x += dx; y += dy;
+  }
+  S.wallsVersion++; saveWalls();
+}
+
+// layGate carves (or moves) a single gate tile on its own — used both by
+// layWallSegment's inline gate and a standalone "open a gate here" order
+// with no segment attached (widening an existing wall's access).
+function layGate(pt) {
+  const key = wallKey(clampX(pt.x), clampY(pt.y));
+  S.walls.delete(key); S.gates.add(key);
+  S.wallsVersion++; saveWalls();
+}
+
+// wallPieceFor picks the fence sprite + rotation for a wall tile from its
+// neighbor connectivity (n/s/e/w booleans — a gate neighbor counts as
+// "connected" so the fence line reads continuous right up to the opening).
+// Only h/v/tl/tr/post pieces exist in the atlas, so a bottom-side corner is
+// a TOP corner rotated 180°: tl (connects E+S) flipped connects W+N; tr
+// (connects W+S) flipped connects E+N.
+function wallPieceFor(n, s, e, w) {
   const f = S.atlas.fence;
-  const add = (tex, tx, ty) => {
-    const s = new Sprite(tex); s.x = tx * TILE; s.y = ty * TILE; s.zIndex = s.y + TILE;
-    entities.addChild(s); S.palisadeSprites.push(s);
+  const deg = (n ? 1 : 0) + (s ? 1 : 0) + (e ? 1 : 0) + (w ? 1 : 0);
+  if (deg >= 3) return { tex: f.post, rot: 0 };        // a junction — no atlas tile for it; a post reads fine as a strongpoint
+  if (e && s) return { tex: f.tl, rot: 0 };
+  if (w && s) return { tex: f.tr, rot: 0 };
+  if (w && n) return { tex: f.tl, rot: Math.PI };
+  if (e && n) return { tex: f.tr, rot: Math.PI };
+  if (e || w) return { tex: f.h, rot: 0 };
+  if (n || s) return { tex: f.v, rot: 0 };
+  return { tex: f.post, rot: 0 };                      // isolated tile — a lone post
+}
+
+// renderWalls (re)draws every wall/gate sprite from S.walls/S.gates — only
+// when the tile set actually changed (S.wallsVersion), not every tick, and
+// never by resizing one big ring: it just re-lays whatever tiles exist now.
+function renderWalls() {
+  if (S.wallsRendered === S.wallsVersion) return;
+  S.wallsRendered = S.wallsVersion;
+  for (const s of S.wallSprites) { entities.removeChild(s); s.destroy(); }
+  S.wallSprites = [];
+  const connected = (x, y) => S.walls.has(wallKey(x, y)) || S.gates.has(wallKey(x, y));
+  const add = (tex, tx, ty, rot, tint) => {
+    const s = new Sprite(tex); s.anchor.set(0.5, 0.5);
+    s.x = tx * TILE + TILE / 2; s.y = ty * TILE + TILE / 2; s.rotation = rot;
+    if (tint != null) s.tint = tint;
+    s.zIndex = (ty + 1) * TILE;
+    entities.addChild(s); S.wallSprites.push(s);
   };
-  for (let tx = x0; tx <= x1; tx++) { add(f.h, tx, y0); add(f.h, tx, y1); }
-  for (let ty = y0 + 1; ty < y1; ty++) { add(f.v, x0, ty); add(f.v, x1, ty); }
-  add(f.tl, x0, y0); add(f.tr, x1, y0);      // corner posts
+  for (const key of S.walls) {
+    const [tx, ty] = key.split(',').map(Number);
+    const { tex, rot } = wallPieceFor(connected(tx, ty - 1), connected(tx, ty + 1), connected(tx + 1, ty), connected(tx - 1, ty));
+    add(tex, tx, ty, rot);
+  }
+  // A gate is a tinted post (gold, matching the trader/coin pip elsewhere) —
+  // visibly a structure, but distinct from a plain wall post, and it's NOT
+  // in S.walls so findPath's passability check lets folk straight through.
+  for (const key of S.gates) {
+    const [tx, ty] = key.split(',').map(Number);
+    add(S.atlas.fence.post, tx, ty, 0, 0xf2c14e);
+  }
 }
 
 // ---- villagers ------------------------------------------------------
@@ -676,13 +768,64 @@ function releaseClaim(v) {
   if (n && n.claimedBy === v) n.claimedBy = null;
 }
 
+// ---- pathing (route around walls, through gates) ---------------------
+// findPath runs a tile-grid BFS from a pixel position to a destination pixel
+// position, avoiding S.walls tiles and passing freely through S.gates tiles.
+// The town is ~96x72 = ~7k cells — cheap to search on a target PICK (not
+// every frame). Returns a list of pixel waypoints to walk in order (the
+// last one is the exact destination, not just a tile center), or null if no
+// route exists at all (fully walled off with no gate) so the caller can
+// degrade gracefully instead of freezing or clipping through the wall.
+const DIRS4 = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+function findPath(px, py, tx, ty) {
+  const sx = Math.floor(px / TILE), sy = Math.floor(py / TILE);
+  const gx = Math.floor(tx / TILE), gy = Math.floor(ty / TILE);
+  if (sx === gx && sy === gy) return [{ x: tx, y: ty }];
+  const goalK = wallKey(gx, gy);
+  if (S.walls.has(goalK)) return null;           // destination tile is itself a wall
+  const startK = wallKey(sx, sy);
+  const cameFrom = new Map([[startK, null]]);
+  const queue = [[sx, sy]]; let qi = 0;
+  while (qi < queue.length) {
+    const [cx, cy] = queue[qi++];
+    if (wallKey(cx, cy) === goalK) break;        // shortest path found — stop expanding
+    for (const [dx, dy] of DIRS4) {
+      const nx = cx + dx, ny = cy + dy;
+      if (nx < 0 || ny < 0 || nx >= TOWN_W || ny >= TOWN_H) continue;
+      const k = wallKey(nx, ny);
+      if (cameFrom.has(k) || S.walls.has(k)) continue;
+      cameFrom.set(k, wallKey(cx, cy));
+      queue.push([nx, ny]);
+    }
+  }
+  if (!cameFrom.has(goalK)) return null;         // sealed off — no gate reaches it
+  const tiles = []; let k = goalK;
+  while (k) { const [x, y] = k.split(',').map(Number); tiles.push([x, y]); k = cameFrom.get(k); }
+  tiles.reverse(); tiles.shift();                // drop the start tile — already standing there
+  const waypoints = tiles.map(([x, y]) => ({ x: x * TILE + TILE / 2, y: y * TILE + TILE / 2 }));
+  if (waypoints.length) waypoints[waypoints.length - 1] = { x: tx, y: ty }; // land exactly on the real target
+  else waypoints.push({ x: tx, y: ty });
+  return waypoints;
+}
+
+// goTo sets a villager's destination and plans its route around walls once,
+// here, at target-pick time — stepVillager just walks the cached waypoint
+// list, never repathing per frame. No route exists → the villager idles a
+// few seconds (not zero — so a sealed-off target doesn't spin retrying the
+// BFS every frame) and lets the next pickTarget try again.
+function goTo(v, x, y) {
+  v.tx = x; v.ty = y;
+  const path = findPath(v.x, v.y, x, y);
+  if (!path) { v.moving = false; v.path = null; v.idle = 1 + Math.random() * 3; return; }
+  v.path = path; v.moving = true;
+}
+
 function pickTarget(v) {
   if (v.role === 'soldier' && isRaided()) {
     // rush the settlement's wall (near the town centre), not the far map edge
     const a = Math.random() * Math.PI * 2;
-    v.tx = (TOWN_W / 2 + Math.cos(a) * 13) * TILE;
-    v.ty = (TOWN_H / 2 + Math.sin(a) * 11) * TILE;
-    v.moving = true; return;
+    goTo(v, (TOWN_W / 2 + Math.cos(a) * 13) * TILE, (TOWN_H / 2 + Math.sin(a) * 11) * TILE);
+    return;
   }
   // Miners and woodcutters make work trips: out to a node, then home to
   // haul (see CARRY) — always seek the nearest node next, whether they just
@@ -692,15 +835,18 @@ function pickTarget(v) {
     releaseClaim(v);                       // drop any node we were holding
     const node = nearestNode(v.x, v.y, cfg.nodeType);
     if (node) {
-      v.tx = node.x; v.ty = node.y; v.targetNode = node;
+      v.targetNode = node;
       // Exhaustible nodes (trees) are one-worker: claim it so the next idle
       // woodcutter skips it and the phantom-chop double-log can't happen.
       if (cfg.exhaustible) node.claimedBy = v;
+      goTo(v, node.x, node.y);
+    } else {
+      v.targetNode = null;
+      const t = randomTownPoint(); goTo(v, t.x, t.y);
     }
-    else { const t = randomTownPoint(); v.tx = t.x; v.ty = t.y; v.targetNode = null; }
-    v.moving = true; return;
+    return;
   }
-  const t = randomTownPoint(); v.tx = t.x; v.ty = t.y; v.moving = true;
+  const t = randomTownPoint(); goTo(v, t.x, t.y);
 }
 
 function nearestNode(px, py, type) {
@@ -819,8 +965,9 @@ function startHaul(v, cfg, node) {
   v.addChild(s); v.carrySprite = s; v.hauling = true;
   const home = nearestBuilding(cfg.building, v.x, v.y);
   v.haulTarget = home ? home.ref : null; // TEMP assignment — cleared on deliver/despawn
+  v.targetNode = null;
   const t = home || randomTownPoint();
-  v.tx = t.x; v.ty = t.y; v.targetNode = null; v.moving = true;
+  goTo(v, t.x, t.y);
 }
 
 function deliverCommodity(v) {
@@ -869,13 +1016,18 @@ function stepVillager(v, dt) {
     }
     return;
   }
+  if (!v.path || !v.path.length) { v.moving = false; return; } // safety net — shouldn't happen
   if (!v.anim.playing) v.anim.play();
-  const dx = v.tx - v.x, dy = v.ty - v.y;
+  const wp = v.path[0];                // walk toward the next cached waypoint, not straight at v.tx/v.ty
+  const dx = wp.x - v.x, dy = wp.y - v.y;
   const dist = Math.hypot(dx, dy);
   const worker = !!CARRY[v.role];
   const speed = (v.role === 'soldier' && isRaided() ? 34 : worker ? 24 : 18) * dt;
   if (dist < speed) {
-    v.x = v.tx; v.y = v.ty; v.moving = false; v.anim.gotoAndStop(0); v.zIndex = v.y;
+    v.x = wp.x; v.y = wp.y; v.zIndex = v.y;
+    v.path.shift();
+    if (v.path.length) return;         // more waypoints ahead (bending around a wall) — continue next frame
+    v.moving = false; v.anim.gotoAndStop(0);
     if (v.targetNode) {                // reached the work node — toil a while, sparks flying
       v.working = true; v.workNode = v.targetNode; v.targetNode = null;
       const cfg = CARRY[v.role];
@@ -1123,6 +1275,7 @@ function pushOrder(o) {
   S.orderLog.push({
     type: o.type, target: o.target, action: o.action, resource: o.resource,
     value: o.value, qty: o.qty || 1, reason: o.reason,
+    from: o.from, to: o.to, gate: o.gate,     // 'wall' orders: a segment (from/to) and/or a gate point
     qtyLeft: o.qty || 1, status: 'pending', progress: 0, waited: 0,
   });
 }
@@ -1173,6 +1326,21 @@ function advanceOrder(a, dt) {
       if (a.waited > 16) { a.status = 'skipped'; a.doneAt = Date.now(); }
       return;
     }
+  } else if (a.type === 'wall') {
+    // Walls cost the same materials + raise defense the old palisade LEVEL
+    // did (S.game.build/canAfford still gate it — game.js is unchanged) —
+    // only the RESULT differs: real tiles (a segment and/or a gate) land on
+    // the grid instead of an auto-ring being redrawn.
+    if (!((a.from && a.to) || a.gate)) { a.status = 'skipped'; a.doneAt = Date.now(); return; } // malformed order — no geometry to build
+    if (S.game.build('palisade')) {
+      if (a.from && a.to) layWallSegment(a.from, a.to, a.gate);
+      else if (a.gate) layGate(a.gate);
+      a.qtyLeft -= 1; a.waited = 0;
+    } else {
+      autoFund('palisade'); a.progress = 1; a.waited += dt;
+      if (a.waited > 16) { a.status = 'skipped'; a.doneAt = Date.now(); }
+      return;
+    }
   }
   if (a.qtyLeft <= 0) { a.status = 'done'; a.doneAt = Date.now(); }
   else a.progress = 0;           // begin the next unit
@@ -1206,6 +1374,37 @@ function autoFund(id) {
   }
 }
 
+// planDefensiveSegment — the local heuristic's autonomous wall planner: picks
+// the next un-walled side of the settlement's built footprint (a straight
+// north/south/east/west run just outside its plot bounding box) and a gate
+// at its middle so the folk can still reach the fields/nodes beyond it.
+// Cycles through all four sides once each (S.wallEdgesBuilt); once all four
+// are planned locally, further walls are the Will's speakers to extend/gate.
+function planDefensiveSegment() {
+  let minX = 1e9, minY = 1e9, maxX = -1e9, maxY = -1e9;
+  for (const key of S.usedPlots) {
+    const [px, py] = key.split(',').map(Number);
+    minX = Math.min(minX, px * PLOT); minY = Math.min(minY, py * PLOT);
+    maxX = Math.max(maxX, (px + 1) * PLOT - 1); maxY = Math.max(maxY, (py + 1) * PLOT - 1);
+  }
+  if (minX > maxX) return null;   // nothing built yet — nowhere to wall
+  const x0 = Math.max(0, minX - 2), y0 = Math.max(0, minY - 2);
+  const x1 = Math.min(TOWN_W - 1, maxX + 2), y1 = Math.min(TOWN_H - 1, maxY + 2);
+  const midX = Math.round((x0 + x1) / 2), midY = Math.round((y0 + y1) / 2);
+  const sides = {
+    north: { from: { x: x0, y: y0 }, to: { x: x1, y: y0 }, gate: { x: midX, y: y0 } },
+    south: { from: { x: x0, y: y1 }, to: { x: x1, y: y1 }, gate: { x: midX, y: y1 } },
+    west: { from: { x: x0, y: y0 }, to: { x: x0, y: y1 }, gate: { x: x0, y: midY } },
+    east: { from: { x: x1, y: y0 }, to: { x: x1, y: y1 }, gate: { x: x1, y: midY } },
+  };
+  for (const [name, seg] of Object.entries(sides)) {
+    if (S.wallEdgesBuilt.has(name)) continue;
+    S.wallEdgesBuilt.add(name);
+    return seg;
+  }
+  return null;                    // all four sides already planned locally
+}
+
 // localSteward: the town's own hands. When no orders are queued it picks a
 // sensible next build so the hold keeps growing even with no Claude.
 function localSteward() {
@@ -1217,12 +1416,20 @@ function localSteward() {
   if (wantFood && (g.farmPlots || []).some((p) => p.size < 3) && Math.random() < 0.5) {
     pushOrder({ type: 'expand', target: 'farm', qty: 1 }); return;
   }
+  // Walls: the same trigger the old auto-ring had (raided + under-defended,
+  // or an explicit defense focus), but now it PLANS geometry — a straight
+  // segment with a gate — instead of magically redrawing a ring. Segments
+  // accumulate (see wallEdgesBuilt in planDefensiveSegment), so the town's
+  // wall visibly grows piecemeal even with no Will involved.
+  const wantWall = (isRaided() && g.defense() < 3) || S.focus === 'defense';
+  if (wantWall && g.canAfford('palisade')) {
+    const seg = planDefensiveSegment();
+    if (seg) { pushOrder({ type: 'wall', target: 'palisade', from: seg.from, to: seg.to, gate: seg.gate, qty: 1 }); return; }
+  }
   const want = [];
   if (g.pop >= g.popCap() - 0.5) want.push('longhouse');
-  if (isRaided() && g.defense() < 3) want.push('palisade');
   if (!g.tradeUnlocked()) want.push('market');
   if (g.res.food >= g.caps().food * 0.92) want.push('granary');
-  if (S.focus === 'defense') want.push('palisade');
   if (S.focus === 'food') want.push('farm');
   // Raise the faith now and then — reliquaries widen the Will's voice.
   if (g.level('reliquary') < 4 && g.pop > 12 && Math.random() < 0.12) want.push('reliquary');
@@ -1287,7 +1494,10 @@ function willState(occasion, instruction) {
 }
 
 function normalizeOrder(o) {
-  return { type: o.type, target: o.target, action: o.action, resource: o.resource, value: o.value || o.target, qty: o.qty || 1 };
+  return {
+    type: o.type, target: o.target, action: o.action, resource: o.resource, value: o.value || o.target, qty: o.qty || 1,
+    from: o.from, to: o.to, gate: o.gate,     // a speaker's 'wall' order: {x,y} segment endpoints and/or a gate point
+  };
 }
 
 // The Steward-ask box: P opens it so you can instruct the Steward in your own
@@ -1493,11 +1703,12 @@ function initResTip() {
 function orderText(o) {
   if (o.type === 'build') return `build ${o.target}${o.qty > 1 ? ' ×' + o.qty : ''}`;
   if (o.type === 'expand') return 'expand a field';
+  if (o.type === 'wall') return o.from && o.to ? `raise a wall${o.gate ? ' + gate' : ''}` : 'open a gate';
   if (o.type === 'trade') return `${o.action} ${o.qty || ''} ${o.resource}`.replace(/\s+/g, ' ').trim();
   if (o.type === 'focus') return `focus ${o.value || o.target}`;
   return o.type;
 }
-const orderIcon = (o) => o.type === 'build' ? '🔨' : o.type === 'expand' ? '🌱' : o.type === 'trade' ? (o.action === 'sell' ? '💰' : '🛒') : '🎯';
+const orderIcon = (o) => o.type === 'build' ? '🔨' : o.type === 'wall' ? '🧱' : o.type === 'expand' ? '🌱' : o.type === 'trade' ? (o.action === 'sell' ? '💰' : '🛒') : '🎯';
 
 function orderEntryHTML(o) {
   const t = `${orderIcon(o)} ${orderText(o)}`;
