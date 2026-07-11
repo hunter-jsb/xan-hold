@@ -9,7 +9,7 @@ import { loadAtlas, TILE } from './atlas.js';
 import { makePanel } from './ui.js';
 
 const { allHolds } = window.XAN;
-const { Game, BUILDINGS, CFG } = window.XANGAME;
+const { Game, BUILDINGS, BY_ID, CFG } = window.XANGAME;
 
 // ---- config ---------------------------------------------------------
 const PLOT = 4;                 // a building plot is 4x4 tiles (roomy — no crowding)
@@ -1335,9 +1335,26 @@ function hoverIdentify(e) {
   if (!h) { tip.style.display = 'none'; return; }
   let text = h.label || BUILD_NAME[h.type] || h.type;
   if (h.type) { const lv = S.game.level(h.type); if (lv) text += ' · lvl ' + lv; }
+  if (h.type && BY_ID[h.type] && BY_ID[h.type].kind === 'storage') { const fill = storageFill(h.type); if (fill) text += ' · ' + fill; }
   tip.textContent = text;
   tip.style.left = e.clientX + 'px'; tip.style.top = e.clientY + 'px';
   tip.style.display = 'block';
+}
+
+// storageFill summarizes a storage building's overall fill for #btip: the
+// sum of stored goods over the sum of caps, across every resource that
+// building type contributes to (per capBreakdown, so it agrees with caps()).
+// '' if it caps nothing (shouldn't happen, but keeps the tooltip clean).
+function storageFill(id) {
+  const g = S.game;
+  let cur = 0, cap = 0;
+  for (const k of Object.keys(CFG.baseCaps)) {
+    if (k === 'coin') continue; // uncapped — not part of a storehouse's remit
+    const { contributors, total } = g.capBreakdown(k);
+    if (!contributors.some((c) => c.id === id)) continue;
+    cur += g.res[k]; cap += total;
+  }
+  return cap > 0 ? `stores ${Math.floor(cur)} / ${Math.floor(cap)}` : '';
 }
 
 // ---- hover highlight (perma vs temp assignees) -----------------------
@@ -1776,13 +1793,16 @@ function initHUD(away) {
   initStewardAsk();
 }
 
-// resRow renders one member resource as an icon + count + net-rate — the
-// same markup the old flat strip used (class="res" data-res="k"), so
-// initResTip's hover breakdown keeps working unchanged on these rows.
+// resRow renders one member resource as an icon + current/max + net-rate —
+// the same markup the old flat strip used (class="res" data-res="k"), so
+// initResTip's hover breakdown keeps working unchanged on these rows. Coin
+// has no cap (see capBreakdown) so it skips the "/max" — storage transparency
+// applies to storable goods, not the ever-open coin chest.
 function resRow(g, rate, k) {
   let net = rate[k]; if (k === 'food') net -= g.foodEatPerS();
   const cls = net > 0.01 ? 'up' : net < -0.01 ? 'down' : '';
-  return `<span class="res" data-res="${k}"><b>${RES_ICON[k]}${Math.floor(g.res[k])}</b><i class="${cls}">${net >= 0 ? '+' : ''}${net.toFixed(1)}</i></span>`;
+  const cap = k === 'coin' ? '' : `<small class="cap">/${Math.floor(g.caps()[k])}</small>`;
+  return `<span class="res" data-res="${k}"><b>${RES_ICON[k]}${Math.floor(g.res[k])}</b>${cap}<i class="${cls}">${net >= 0 ? '+' : ''}${net.toFixed(1)}</i></span>`;
 }
 
 // chip renders one collapsible category chip: a collapsed head (icon + the
@@ -1866,7 +1886,23 @@ function resourceBreakdown(k) {
   return lines;
 }
 
-// initResTip shows an income/consumption breakdown when a resource is hovered.
+// storeTip renders a resource's storage line(s) for #restip: current/max,
+// plus which storage building(s) contribute to that max and how much — the
+// same capBreakdown() that backs caps(), so these numbers can't disagree.
+// Coin has no cap; a resource with no storage contributors yet just reads
+// "base N → N" (capBreakdown returns an empty contributors list for it).
+function storeTip(k) {
+  const g = S.game;
+  if (k === 'coin') return `<div class="bl cap"><span>stores</span><b>uncapped</b></div>`;
+  const { base, contributors, total } = g.capBreakdown(k);
+  const parts = contributors.map((c) => `${c.name} ×${c.count} +${Math.round(c.add)}`);
+  const breakdown = [`base ${Math.round(base)}`, ...parts].join(' · ') + ` → ${Math.round(total)}`;
+  return `<div class="bl cap"><span>stores</span><b>${Math.floor(g.res[k])} / ${Math.round(total)}</b></div>`
+       + `<div class="dim cap-detail">${breakdown}</div>`;
+}
+
+// initResTip shows an income/consumption breakdown, plus a storage-capacity
+// breakdown, when a resource is hovered.
 function initResTip() {
   const bar = document.getElementById('resstrip'), tip = document.getElementById('restip');
   if (!bar || !tip) return;
@@ -1879,11 +1915,13 @@ function initResTip() {
       ? lines.map((l) => `<div class="bl"><span>${l.label}</span><b class="${l.val >= 0 ? 'up' : 'down'}">${l.val >= 0 ? '+' : ''}${l.val.toFixed(2)}</b></div>`).join('')
       : '<div class="dim">no works yet</div>';
     // Faith's footer shows progress toward the invocation threshold instead
-    // of a net rate — that's the number that actually matters here.
+    // of a net rate — that's the number that actually matters here. Faith
+    // also has no store (not a res[] entry), so it skips the storage line.
     const footer = k === 'faith'
       ? `<div class="bl net"><span>threshold</span><b>${Math.floor(S.game.faith)} / ${S.game.faithThreshold()}</b></div>`
       : `<div class="bl net"><span>net</span><b class="${net >= 0 ? 'up' : 'down'}">${net >= 0 ? '+' : ''}${net.toFixed(2)}/s</b></div>`;
-    tip.innerHTML = `<div class="ttl">${RES_ICON[k]} ${k}</div>${rows}${footer}`;
+    const storage = k === 'faith' ? '' : storeTip(k);
+    tip.innerHTML = `<div class="ttl">${RES_ICON[k]} ${k}</div>${rows}${footer}${storage}`;
     tip.style.display = 'block'; tip.style.left = e.clientX + 'px'; tip.style.top = e.clientY + 'px';
   });
   bar.addEventListener('mouseleave', () => { tip.style.display = 'none'; });

@@ -24,6 +24,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #0d1014; }
   background: rgba(8,10,13,.55); padding: 4px 9px; border-radius: 7px; text-shadow: 0 1px 3px #000; }
 .res i { font-style: normal; font-size: 11px; color: var(--dim); }
 .res i.up { color: #8fd39b; } .res i.down { color: var(--bad); }
+.res .cap { font-size: 11px; color: var(--dim); margin: 0 1px; } /* "/max" — storage capacity */
 .ricon { width: 15px; height: 15px; image-rendering: pixelated; vertical-align: -2px; }
 .ricon.sm { width: 13px; height: 13px; vertical-align: -1px; }
 
@@ -69,6 +70,8 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #0d1014; }
 #restip .bl { display: flex; justify-content: space-between; gap: 16px; padding: 1px 0; }
 #restip .bl b.up { color: #8fd39b; } #restip .bl b.down { color: var(--bad); }
 #restip .bl.net { margin-top: 4px; padding-top: 4px; border-top: 1px solid rgba(255,255,255,.15); }
+#restip .bl.cap { margin-top: 4px; padding-top: 4px; border-top: 1px solid rgba(255,255,255,.15); }
+#restip .cap-detail { font-size: 11px; }
 
 /* Steward instruction prompt */
 #stewardask { position: fixed; inset: 0; z-index: 40; display: none;

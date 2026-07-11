@@ -217,10 +217,32 @@ class Game {
   // the god is heard from more often, not less.
   faithThreshold() { return CFG.faithBase + this.speakers() * CFG.faithPerSpeakerThresh; }
 
+  // capBreakdown(k) — the cap math behind caps(), broken out per contributing
+  // storage building so hovers can show *why* a resource caps where it does.
+  // A storage building's `capRes` (if set) lists which resource keys it
+  // caps; omitted means "every non-coin good" (the granary's case today) —
+  // so a future building that only caps e.g. food just adds `capRes:['food']`.
+  // caps() is built from this same computation, so the two can never drift.
+  capBreakdown(k) {
+    const base = CFG.baseCaps[k];
+    if (k === 'coin') return { base, contributors: [], total: base }; // coin: effectively uncapped
+    const contributors = [];
+    let add = 0;
+    for (const b of BUILDINGS) {
+      if (b.kind !== 'storage') continue;
+      if (b.capRes && !b.capRes.includes(k)) continue;
+      const lv = this.level(b.id);
+      if (!lv) continue;
+      const thisAdd = base * lv * b.capMul;
+      add += thisAdd;
+      contributors.push({ id: b.id, name: b.name, count: lv, add: thisAdd });
+    }
+    return { base, contributors, total: base + add };
+  }
+
   caps() {
-    const s = 1 + this.level('granary') * BY_ID.granary.capMul;
     const out = {};
-    for (const k of Object.keys(CFG.baseCaps)) out[k] = CFG.baseCaps[k] * (k === 'coin' ? 1 : s);
+    for (const k of Object.keys(CFG.baseCaps)) out[k] = this.capBreakdown(k).total;
     return out;
   }
 
