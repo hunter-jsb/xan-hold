@@ -48,6 +48,7 @@ const S = {
   palisadeSprites: [], palisadeSig: null,
   oreNodes: [], woodNodes: [], // resource nodes the folk walk out to work
   mask: { aspect: 'the Will', speakers: 'Speakers' }, // the god's local face, set from tier at boot
+  lastWill: null, // last invocation: {utterance, aspect, speakers:[{name,parish,directive,word,orders}]} — powers the left Speakers panel
   // Hover-highlight state (seed of the jobs system's assignment viz — see
   // resolveHome/startHaul for v.home/v.haulTarget): the hittable currently
   // hovered, its outline, and the ring per assigned villager it's showing.
@@ -1220,10 +1221,17 @@ async function callWill(occasion, instruction) {
     const d = await res.json();
     if (d.utterance) pushChronicle(icon('faith', 'sm') + ' ' + d.utterance, 'will');
     let bidden = 0;
+    const heard = [];
     for (const sp of (d.speakers || [])) {
       if (sp.word) pushChronicle('“' + sp.word + '”', 'speaker');
-      if (Array.isArray(sp.orders)) { sp.orders.map(normalizeOrder).forEach(pushOrder); bidden += sp.orders.length; }
+      const orders = Array.isArray(sp.orders) ? sp.orders.map(normalizeOrder) : [];
+      if (orders.length) { orders.forEach(pushOrder); bidden += orders.length; }
+      heard.push({ name: sp.name, parish: sp.parish, directive: sp.directive, word: sp.word || '', orders });
     }
+    // stash this invocation so the left Speakers panel can show the full
+    // directive → speaker → orders distribution, persisting between calls.
+    S.lastWill = { utterance: d.utterance || null, aspect: d.aspect || aspect, speakers: heard };
+    renderSpeakers();
     if (d.speakers && d.speakers.length) {
       setStewardLine(`${aspect} spoke through ${d.speakers.length} — ${bidden} work${bidden === 1 ? '' : 's'} bidden.`);
       renderOrders();
@@ -1323,6 +1331,8 @@ function initHUD(away) {
   pushChronicle(`${S.hold.name} wakes to another day.`, 'note');
   S.ui.orders = makePanel({ region: 'tr', title: 'Works Bidden' });
   renderOrders();
+  S.ui.speakers = makePanel({ region: 'l', title: 'The Speakers' });
+  renderSpeakers();
   updateHUD();
   initResTip();
   initChipToggle();
@@ -1474,6 +1484,31 @@ function renderOrders() {
     ? S.orderLog.slice(-8).map(orderEntryHTML).join('')
     : '<div class="dim">— the folk work freely —</div>';
   S.ui.orders.set(rows);
+}
+
+// renderSpeakers draws the left "The Speakers" panel from S.lastWill: the
+// Will's utterance up top, then one block per speaker — the directive it
+// heard, its word (how it read that directive), and the orders it bid —
+// so the whole directive → speaker → orders chain is legible at a glance.
+function renderSpeakers() {
+  if (!S.ui.speakers) return;
+  const lw = S.lastWill;
+  if (!lw || !lw.speakers || !lw.speakers.length) {
+    S.ui.speakers.set('<div class="dim">The speakers await a word.</div>');
+    return;
+  }
+  const utt = lw.utterance
+    ? `<div class="sp-utt">${icon('faith', 'sm')} ${lw.utterance}</div>` : '';
+  const blocks = lw.speakers.map((sp) => `
+    <div class="sp-block">
+      <div class="sp-name">${sp.name || 'a speaker'}</div>
+      <div class="sp-directive">“${sp.directive || ''}”</div>
+      ${sp.word ? `<div class="sp-word">${sp.word}</div>` : ''}
+      <div class="sp-orders">${sp.orders.length
+        ? sp.orders.map((o) => `<span class="ordchip">${orderIcon(o)} ${orderText(o)}</span>`).join('')
+        : '<span class="dim">no work bidden</span>'}</div>
+    </div>`).join('');
+  S.ui.speakers.set(utt + blocks);
 }
 
 function pushChronicle(text, kind) {

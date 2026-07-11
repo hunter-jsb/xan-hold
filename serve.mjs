@@ -136,6 +136,7 @@ async function willDecide(state) {
   const maxLen = Math.round(56 * (1 + 0.1 * (n - 1)));       // +10% length per extra reliquary
   const aspect = state.mask?.aspect || 'the Will';
   const speakers = state.mask?.speakers || 'Speakers';
+  const speakerName = speakers.replace(/s$/, '');            // singular, e.g. "Saltspeaker"
   let cost = 0;
   try {
     const w = await claudeJSON({ model: WILL_MODEL, sys: willSys(aspect, speakers, n, maxLen), schema: WILL_SCHEMA, prompt: JSON.stringify(state) });
@@ -145,13 +146,15 @@ async function willDecide(state) {
     // Speakers interpret ONE AT A TIME — the `claude` CLI errors when several
     // instances start at once (config/lock contention), so no Promise.all.
     const heard = [];
-    for (const directive of directives) {
+    for (let i = 0; i < directives.length; i++) {
+      const directive = directives[i];
+      const name = `${speakerName} ${i + 1}`; // which speaker heard this directive — surfaced in the HUD
       try {
         const sp = await claudeJSON({ model: SPEAKER_MODEL, sys: speakerSys(aspect, speakers), schema: SPEAKER_SCHEMA, prompt: JSON.stringify({ directive, parish }) });
         cost += sp.cost;
-        heard.push({ directive, word: sp.answer?.word || '', orders: Array.isArray(sp.answer?.orders) ? sp.answer.orders : [] });
+        heard.push({ name, parish, directive, word: sp.answer?.word || '', orders: Array.isArray(sp.answer?.orders) ? sp.answer.orders : [] });
       } catch (e) {
-        heard.push({ directive, word: '(the speaker faltered before the god’s word)', orders: [] });
+        heard.push({ name, parish, directive, word: '(the speaker faltered before the god’s word)', orders: [] });
       }
     }
     return { utterance: w.answer?.utterance || '', aspect, speakers: heard, cost };
