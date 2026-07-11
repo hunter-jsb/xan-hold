@@ -8,7 +8,7 @@
 const CFG = {
   tickMs: 250,            // sim resolution
   foodPerPop: 0.02,       // food/s eaten per head
-  popGrowth: 0.015,       // head/s per surplus unit, gated by housing + food
+  popGrowth: 0.008,       // head/s per surplus unit — needs a real food surplus AND housing headroom
   costScale: 1.16,        // per-level upgrade cost multiplier
   raidIntervalS: 135,     // mean seconds between raid checks
   maxOfflineH: 12,        // cap offline catch-up
@@ -281,8 +281,10 @@ class Game {
       this.res.food = 0;
       this.pop = Math.max(3, this.pop - 0.05 * this.pop * dt);
     } else if (this.pop < this.popCap()) {
-      const surplus = Math.max(0, netFood);
-      this.pop = Math.min(this.popCap(), this.pop + CFG.popGrowth * (0.5 + surplus) * dt);
+      // Growth needs a real food surplus (no free floor) and is capped so a
+      // food-rich hold can't breed explosively; housing (popCap) is the ceiling.
+      const surplus = Math.min(3, Math.max(0, netFood));
+      this.pop = Math.min(this.popCap(), this.pop + CFG.popGrowth * surplus * dt);
     }
     this.stepRaids(dt, offline);
     this.stepFaith(dt);
