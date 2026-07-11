@@ -56,7 +56,6 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #0d1014; }
   border-radius: 0 8px 8px 0; padding: 10px 14px; backdrop-filter: blur(2px); }
 #chronicle { display: flex; flex-direction: column; gap: 3px; }
 .cl { font-size: 13px; line-height: 1.4; opacity: .95; }
-.cl.steward { font-family: var(--serif); font-size: 15px; color: #ffe7b0; }
 .cl.will { font-family: var(--serif); font-size: 16px; color: #ffdc7a;
   text-shadow: 0 0 10px rgba(255,190,70,.35); letter-spacing: .01em; }
 .cl.speaker { color: #d9c8a2; font-style: italic; }
@@ -99,7 +98,6 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #0d1014; }
 /* panel system: stacked cards inside positioned regions */
 .region { position: absolute; display: flex; flex-direction: column; gap: 10px; align-items: flex-end; }
 #region-tr { top: 62px; right: 18px; max-width: 264px; }
-#region-br { bottom: 14px; right: 18px; }
 .panel { background: rgba(8,10,13,.64); border-radius: 8px; padding: 8px 12px;
   font-size: 12px; line-height: 1.5; backdrop-filter: blur(2px);
   box-shadow: 0 2px 10px rgba(0,0,0,.35); min-width: 158px; }

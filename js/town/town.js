@@ -1,9 +1,9 @@
 // town.js — the living town. PixiJS renders a ¾ top-down cozy pixel hold
 // that grows from the deterministic economy (window.XANGAME) whose seed is
 // one settlement from the world-sim (window.XAN). It runs itself: a local
-// heuristic steward keeps building, and every few minutes (or on `p`) the
-// Claude Steward at /steward returns strategic orders + an in-world
-// chronicle. Nothing here writes back to the sim.
+// heuristic keeps building, and when faith crests (or on `p`) the Divine Will
+// at /will returns terse directives its speakers turn into orders + an
+// in-world chronicle. Nothing here writes back to the sim.
 import { Application, Container, Sprite, AnimatedSprite, Texture, Graphics } from 'pixi.js';
 import { loadAtlas, TILE } from './atlas.js';
 import { makePanel } from './ui.js';
@@ -1191,8 +1191,6 @@ function localSteward() {
   }
 }
 
-// callSteward: ask Claude for orders + a chronicle line. Soft-fails to the
-// local steward if the server/Claude is unavailable.
 // callWill invokes the Divine Will: Opus utters terse directives as the hold's
 // aspect (the Salt/Current/Deep…), and its speakers (Haiku) each interpret one
 // into concrete orders. The utterance + each speaker's word land in the log.
