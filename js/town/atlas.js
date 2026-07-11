@@ -43,8 +43,9 @@ const RECIPES = {
   ] },
   // The market is Kenney's little trade cart.
   market: { w: 1, h: 1, tiles: [{ i: 57, x: 0, y: 0 }] },
-  // The reliquary is a whole-image sprite (a church), not tiles.
-  reliquary: { w: 4, h: 4, image: 'church' },
+  // The reliquary is a whole-image sprite (a church), not tiles. w drives its
+  // on-screen size (scale = w*TILE / image width) — 2 = about half of 4.
+  reliquary: { w: 2, h: 3, image: 'church' },
 };
 
 // A trade prop set beside a cottage so its craft reads at a glance.
