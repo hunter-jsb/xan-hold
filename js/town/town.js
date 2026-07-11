@@ -779,18 +779,33 @@ function reconcileFarms() {
 // refade — only genuinely NEW ground (a brand new field, or growth into
 // fresh tiles) fades in.
 function renderFarmDistrict() {
-  const tiles = farmUnionTiles();
   if (!S.farmDistrict) { S.farmDistrict = new Container(); ground.addChild(S.farmDistrict); }
-  for (const [k, sp] of S.farmTiles) {
-    if (tiles.has(k)) continue;
-    S.farmDistrict.removeChild(sp); sp.destroy(); S.farmTiles.delete(k); // a field shrank/moved — shouldn't happen, but stay correct
+  // Each field draws its OWN complete grass-edged 9-slice border. The Tiny Town
+  // set has no inner/concave-corner tile, so cross-field autotiling left
+  // borderless glitches wherever fields of different sizes stepped against each
+  // other — a per-field border is always clean; two adjacent fields just show a
+  // seam, which reads fine as separate plots. Keyed "farm#i:tx,ty" so a shared
+  // edge draws both fields' borders (the seam) rather than collapsing.
+  const wanted = new Map();
+  for (const [key, rec] of S.placed) {
+    if (!key.startsWith('farm#')) continue;
+    const n = 2 + rec.size; // size1→3x3, size2→4x4, size3→5x5
+    const cropTex = S.atlas.crops[rec.crop] || S.atlas.crops.greens;
+    for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
+      const ex = x === 0 ? -1 : x === n - 1 ? 1 : 0;
+      const ey = y === 0 ? -1 : y === n - 1 ? 1 : 0;
+      const tex = (ex === 0 && ey === 0) ? cropTex : S.atlas.farmDirt[`${ey},${ex}`];
+      wanted.set(`${key}:${rec.plot.tx + x},${rec.plot.ty + y}`, { tex, wx: rec.plot.tx + x, wy: rec.plot.ty + y });
+    }
   }
-  for (const [k, { crop }] of tiles) {
-    const [tx, ty] = k.split(',').map(Number);
-    const tex = farmTileTex(tiles, tx, ty, crop);
+  for (const [k, sp] of S.farmTiles) {
+    if (wanted.has(k)) continue;
+    S.farmDistrict.removeChild(sp); sp.destroy(); S.farmTiles.delete(k);
+  }
+  for (const [k, { tex, wx, wy }] of wanted) {
     let sp = S.farmTiles.get(k);
     if (sp) { sp.texture = tex; continue; }
-    sp = new Sprite(tex); sp.x = tx * TILE; sp.y = ty * TILE; sp.alpha = 0;
+    sp = new Sprite(tex); sp.x = wx * TILE; sp.y = wy * TILE; sp.alpha = 0;
     S.farmDistrict.addChild(sp); S.farmTiles.set(k, sp); fadeIn(sp);
   }
   // S.hittable's farm entries are rebuilt fresh every render (cheap, and a
