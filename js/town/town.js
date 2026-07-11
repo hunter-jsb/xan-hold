@@ -319,6 +319,31 @@ function nextFreePlot() {
   return null;
 }
 
+// nextMineNode claims the next available ore vein for a new Deep Mine,
+// clearing its vein sprite (the mine now stands there, in the wilds, not the
+// town grid) and nudging off any miner already headed to or working that
+// exact vein. Returns null once every vein in the field already has a mine.
+function nextMineNode() {
+  const node = S.oreNodes.find((n) => !n.claimedByMine);
+  if (!node) return null;
+  node.claimedByMine = true;
+  if (node.sprite) { entities.removeChild(node.sprite); node.sprite.destroy(); node.sprite = null; }
+  for (const v of S.villagers) {
+    if (v.targetNode === node) { v.targetNode = null; pickTarget(v); }
+    else if (v.workNode === node) { v.working = false; v.workNode = null; v.idle = 0; }
+  }
+  return node;
+}
+
+// mineNodeAvailable — true if a `build mine` order could actually be placed
+// right now: either the ore field still has an unclaimed vein, or the town
+// is already past the drawn-instance cap (MAX_PER_TYPE), in which case a
+// further level just deepens existing mines rather than raising a new one.
+function mineNodeAvailable() {
+  if (S.game.level('mine') >= MAX_PER_TYPE) return true;
+  return S.oreNodes.some((n) => !n.claimedByMine);
+}
+
 function placeTownhall() {
   const center = S.plots[0];
   S.keepKey = `${center.px},${center.py}`;
@@ -338,7 +363,12 @@ function desiredCounts() {
   for (const b of BUILDINGS) {
     if (b.id === 'palisade' || b.id === 'farm') continue; // palisade = wall; farm = drawn from farmPlots
     const lv = S.game.level(b.id);
-    if (lv > 0) d[b.id] = Math.min(MAX_PER_TYPE, Math.max(1, Math.round(lv / (b.kind === 'prod' ? 1.5 : 1))));
+    if (lv <= 0) continue;
+    // A mine hut is pinned 1:1 to a real ore node (see nextMineNode) — its
+    // count can't be a coarser proxy for level like the other producers.
+    d[b.id] = b.id === 'mine'
+      ? Math.min(MAX_PER_TYPE, lv)
+      : Math.min(MAX_PER_TYPE, Math.max(1, Math.round(lv / (b.kind === 'prod' ? 1.5 : 1))));
   }
   return d;
 }
@@ -350,12 +380,23 @@ function reconcileBuildings() {
     for (let k = 0; k < n; k++) {
       const key = `${type}#${k}`;
       if (S.placed.has(key)) continue;
-      const plot = nextFreePlot();
-      if (!plot) return;
       const { recipe, prop } = recipeFor(type);
+      let plot, cx, cy;
+      if (type === 'mine') {
+        // A mine isn't a town plot — it's raised directly on an ore vein out
+        // in the field, claiming that node's spot (see placeOreNodes).
+        const node = nextMineNode();
+        if (!node) break; // the ore field is fully claimed — this mine waits
+        plot = { tx: Math.round(node.x / TILE - recipe.w / 2), ty: Math.round(node.y / TILE - recipe.h), node };
+        cx = plot.tx * TILE; cy = plot.ty * TILE;
+      } else {
+        plot = nextFreePlot();
+        if (!plot) return;
+        cx = plot.tx * TILE + Math.floor((PLOT - recipe.w) / 2) * TILE;
+        cy = (plot.ty + PLOT - recipe.h) * TILE;
+      }
       const c = makeBuildingContainer(recipe, prop);
-      c.x = plot.tx * TILE + Math.floor((PLOT - recipe.w) / 2) * TILE;
-      c.y = (plot.ty + PLOT - recipe.h) * TILE;
+      c.x = cx; c.y = cy;
       if (type === 'farm') {
         // A field is flat ground — put it on the ground layer so the folk
         // walk over it, not behind it. Fade in instead of "rising".
@@ -437,7 +478,11 @@ function placeOreNodes() {
   const addNode = (tex, gx, gy) => {
     const s = new Sprite(tex); s.anchor.set(0.5, 1);
     s.x = gx * TILE + TILE / 2; s.y = gy * TILE + TILE; s.zIndex = s.y;
-    entities.addChild(s); S.oreNodes.push({ x: s.x, y: s.y, sprite: s });
+    entities.addChild(s);
+    // `tex` is kept separately from `sprite` so a claimed node (its sprite
+    // destroyed — a mine now stands there) still has a stable texture for
+    // any miner already carrying ore from it home.
+    S.oreNodes.push({ x: s.x, y: s.y, sprite: s, tex, claimedByMine: false });
   };
   addNode(S.atlas.boulderTex, fx, fy); // a boulder centerpiece
   const used = new Set([`${fx},${fy}`]);
@@ -577,23 +622,22 @@ function pickTarget(v) {
     v.ty = (TOWN_H / 2 + Math.sin(a) * 11) * TILE;
     v.moving = true; return;
   }
-  // Miners and woodcutters make work trips: out to a node, then home again.
-  const nodeType = v.role === 'miner' ? 'ore' : v.role === 'woodcutter' ? 'wood' : null;
-  if (nodeType) {
-    if (v.headingHome) {
-      const t = randomTownPoint(); v.tx = t.x; v.ty = t.y; v.headingHome = false; v.targetNode = null;
-    } else {
-      const node = nearestNode(v.x, v.y, nodeType);
-      if (node) { v.tx = node.x; v.ty = node.y; v.targetNode = node; }
-      else { const t = randomTownPoint(); v.tx = t.x; v.ty = t.y; }
-    }
+  // Miners and woodcutters make work trips: out to a node, then home to
+  // haul (see CARRY) — always seek the nearest node next, whether they just
+  // spawned or just dropped a load off.
+  const cfg = CARRY[v.role];
+  if (cfg) {
+    const node = nearestNode(v.x, v.y, cfg.nodeType);
+    if (node) { v.tx = node.x; v.ty = node.y; v.targetNode = node; }
+    else { const t = randomTownPoint(); v.tx = t.x; v.ty = t.y; v.targetNode = null; }
     v.moving = true; return;
   }
   const t = randomTownPoint(); v.tx = t.x; v.ty = t.y; v.moving = true;
 }
 
 function nearestNode(px, py, type) {
-  const list = type === 'ore' ? S.oreNodes : S.woodNodes;
+  // A claimed ore node has a mine standing on it now — not a vein to work.
+  const list = type === 'ore' ? S.oreNodes.filter((n) => !n.claimedByMine) : S.woodNodes;
   let best = null, bd = Infinity;
   for (const n of list) { const d = (n.x - px) ** 2 + (n.y - py) ** 2; if (d < bd) { bd = d; best = n; } }
   return best;
@@ -616,11 +660,12 @@ function workEffect(node) {
   }
 }
 
-// nearestSawmill returns the pixel centre of the closest sawmill, or null.
-function nearestSawmill(px, py) {
+// nearestBuilding returns the pixel centre of the closest placed building of
+// `type` (sawmill, mine…), or null — where a hauling worker's home lies.
+function nearestBuilding(type, px, py) {
   let best = null, bd = Infinity;
   for (const h of S.hittable) {
-    if (h.type !== 'sawmill') continue;
+    if (h.type !== type) continue;
     const cx = ((h.x0 + h.x1) / 2) * TILE, cy = ((h.y0 + h.y1) / 2) * TILE;
     const d = (cx - px) ** 2 + (cy - py) ** 2;
     if (d < bd) { bd = d; best = { x: cx, y: cy }; }
@@ -655,18 +700,38 @@ function chipBurst(x, y) {
   }
 }
 
-// startHaul gives a woodcutter a log to carry back to the nearest sawmill.
-function startHaul(v) {
-  const log = new Sprite(S.atlas.tex(106)); // Kenney log tile
-  log.anchor.set(0.5, 1); log.scale.set(0.7); log.x = 3; log.y = -19;
-  v.addChild(log); v.logSprite = log; v.hauling = true;
-  const mill = nearestSawmill(v.x, v.y);
-  const t = mill || randomTownPoint();
-  v.tx = t.x; v.ty = t.y; v.targetNode = null; v.headingHome = false; v.moving = true;
+// CARRY — the shared "carry a commodity from a work node to its home
+// building" mechanism: a woodcutter fells a tree and hauls a log to the
+// nearest sawmill; a miner works a vein and hauls an ore chunk to the
+// nearest mine. Both roles run through startHaul/deliverCommodity below —
+// the one mechanism unifying wood and ore, so a new commodity is just a
+// new entry here.
+const CARRY = {
+  woodcutter: {
+    nodeType: 'wood', building: 'sawmill', exhaustible: true,
+    tex: () => S.atlas.tex(106), // Kenney log tile
+    scale: 0.7, dx: 3, dy: -19, workMin: 2.5, workRange: 2,
+  },
+  miner: {
+    nodeType: 'ore', building: 'mine', exhaustible: false,
+    tex: (node) => node.tex, // the vein's own ore texture — small, matches what was mined
+    scale: 0.55, dx: 3, dy: -18, workMin: 3, workRange: 3,
+  },
+};
+
+// startHaul attaches the carried-commodity sprite and sends the worker home
+// to the nearest matching building; deliverCommodity drops it there.
+function startHaul(v, cfg, node) {
+  const s = new Sprite(cfg.tex(node));
+  s.anchor.set(0.5, 1); s.scale.set(cfg.scale); s.x = cfg.dx; s.y = cfg.dy;
+  v.addChild(s); v.carrySprite = s; v.hauling = true;
+  const home = nearestBuilding(cfg.building, v.x, v.y);
+  const t = home || randomTownPoint();
+  v.tx = t.x; v.ty = t.y; v.targetNode = null; v.moving = true;
 }
 
-function deliverLog(v) {
-  if (v.logSprite) { v.removeChild(v.logSprite); v.logSprite.destroy(); v.logSprite = null; }
+function deliverCommodity(v) {
+  if (v.carrySprite) { v.removeChild(v.carrySprite); v.carrySprite.destroy(); v.carrySprite = null; }
   v.hauling = false;
 }
 
@@ -699,7 +764,13 @@ function stepVillager(v, dt) {
   if (!v.moving) {
     v.idle -= dt;
     if (v.idle <= 0) {
-      if (v.chopping) { v.chopping = false; fellTree(v.chopNode); v.chopNode = null; startHaul(v); return; }
+      if (v.working) {                 // finished toiling the node — haul the goods home
+        v.working = false;
+        const node = v.workNode, cfg = CARRY[v.role]; v.workNode = null;
+        if (cfg.exhaustible) fellTree(node);   // wood: the tree is gone; ore veins don't deplete
+        startHaul(v, cfg, node);
+        return;
+      }
       pickTarget(v);
     }
     return;
@@ -707,19 +778,17 @@ function stepVillager(v, dt) {
   if (!v.anim.playing) v.anim.play();
   const dx = v.tx - v.x, dy = v.ty - v.y;
   const dist = Math.hypot(dx, dy);
-  const worker = v.role === 'miner' || v.role === 'woodcutter';
+  const worker = !!CARRY[v.role];
   const speed = (v.role === 'soldier' && isRaided() ? 34 : worker ? 24 : 18) * dt;
   if (dist < speed) {
     v.x = v.tx; v.y = v.ty; v.moving = false; v.anim.gotoAndStop(0); v.zIndex = v.y;
-    if (v.targetNode && v.role === 'woodcutter') {  // reached a tree — chop it down, then haul
-      v.chopping = true; v.chopNode = v.targetNode; v.targetNode = null;
-      v.idle = 2.5 + Math.random() * 2;
-      workEffect(v.chopNode);
-    } else if (v.targetNode) {          // miner at an ore vein — toil a while, sparks flying
-      v.headingHome = true; v.idle = 3 + Math.random() * 3;
-      workEffect(v.targetNode); v.targetNode = null;
-    } else {                           // arrived home / at the mill
-      if (v.hauling) deliverLog(v);
+    if (v.targetNode) {                // reached the work node — toil a while, sparks flying
+      v.working = true; v.workNode = v.targetNode; v.targetNode = null;
+      const cfg = CARRY[v.role];
+      v.idle = cfg.workMin + Math.random() * cfg.workRange;
+      workEffect(v.workNode);
+    } else {                           // arrived home / at the mill, or just wandering
+      if (v.hauling) deliverCommodity(v);
       v.idle = 0.8 + Math.random() * 2.5;
     }
     return;
@@ -915,6 +984,12 @@ function advanceOrder(a, dt) {
     if (a.action === 'sell') S.game.sell(a.resource, q); else S.game.buy(a.resource, q);
     a.qtyLeft = 0;
   } else if (a.type === 'build') {
+    // A mine can only rise on an ore vein — if the field has none free (and
+    // the town isn't already past its drawn-instance cap), the order can't
+    // be fulfilled; fail it outright rather than spend resources on a mine
+    // with nowhere to stand. This is the town-side "correct placement"
+    // resolution for any `build mine` order, however it was raised.
+    if (a.target === 'mine' && !mineNodeAvailable()) { a.status = 'skipped'; a.doneAt = Date.now(); return; }
     // A new farm is its own field (with a crop); other builds raise a level.
     const ok = a.target === 'farm' ? S.game.newFarm(a.crop) : S.game.build(a.target);
     if (ok) { a.qtyLeft -= 1; a.waited = 0; }
