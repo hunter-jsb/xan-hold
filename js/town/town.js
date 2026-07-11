@@ -15,6 +15,21 @@ const { Game, BUILDINGS, BY_ID, CFG } = window.XANGAME;
 const PLOT = 4;                 // a building plot is 4x4 tiles (roomy — no crowding)
 const TOWN_W = 96, TOWN_H = 72; // a big wilderness map the camera drifts across
 const PLOTS_X = Math.floor(TOWN_W / PLOT), PLOTS_Y = Math.floor(TOWN_H / PLOT);
+
+// ---- coordinates ----------------------------------------------------
+// ONE gameplay grid: TILES. Pixel is a derived VIEW, converted only here at the
+// render edge (tilePx). Plot is a coarse placement grid (being retired). Every
+// "town centre" reads these single CENTER constants — the keep is placed dead
+// on CENTER, so walls, camera, ore field, water, and the core zone can never
+// disagree about where the town is again (they used to, by 2 tiles).
+const CENTER_TX = TOWN_W / 2, CENTER_TY = TOWN_H / 2;       // the town centre, in tiles
+const CENTER_PX = (PLOTS_X - 1) / 2, CENTER_PY = (PLOTS_Y - 1) / 2; // …and in plot units (same point)
+const tilePx = (t) => t * TILE;                             // tile -> pixel
+const pxToTile = (x) => Math.floor(x / TILE);               // pixel -> tile
+const plotToTile = (p) => p * PLOT;                         // plot -> tile (its top-left)
+const pxToPlot = (x) => Math.floor(x / (PLOT * TILE));      // pixel -> plot
+const plotCenterPx = (px, py) => ({ x: (px * PLOT + PLOT / 2) * TILE, y: (py * PLOT + PLOT / 2) * TILE });
+
 const DAY_MS = 240000;          // a full day/night in real ms
 const STEWARD_MS = Number(localStorage.getItem('xh_stewardMs') || 1800000); // ambient decree cadence — faith is the primary trigger now; this is just a slow backstop (30 min)
 const LOCAL_MS = 6000;          // heuristic steward cadence
@@ -47,7 +62,7 @@ const S = {
   orderLog: [], focus: null, chronicle: [],
   stewardBusy: false, lastRaidTally: 0, alarm: 0,
   hudOn: true, ui: { pinned: new Set() }, // ui.pinned: category keys clicked open (see chip() in updateHUD)
-  cam: { x: TOWN_W / 2, y: TOWN_H / 2 }, camAuto: true, lastInput: 0,
+  cam: { x: CENTER_TX, y: CENTER_TY }, camAuto: true, lastInput: 0,
   hittable: [], // building bounds for hover-identify
   // Real, planned walls: a set of wall tiles (impassable) and gate tiles
   // (passable openings), keyed "x,y" — grown by wall ORDERS (see the 'wall'
@@ -191,7 +206,7 @@ function bgForHold(h) {
 
 // ---- ground + plots -------------------------------------------------
 function buildPlots() {
-  const cx = (PLOTS_X - 1) / 2, cy = (PLOTS_Y - 1) / 2;
+  const cx = CENTER_PX, cy = CENTER_PY;
   const list = [];
   for (let py = 0; py < PLOTS_Y; py++)
     for (let px = 0; px < PLOTS_X; px++)
@@ -223,7 +238,7 @@ function paintGround() {
   const clusterRows = (S.hold.temp < 9) ? S.atlas.clusters.autumn : S.atlas.clusters.green;
   const timber = S.hold.rich.timber; // 0..1
   const onBuild = (tx, ty) => tx < 0 || ty < 0 || tx >= TOWN_W || ty >= TOWN_H || near.has(`${Math.floor(tx / PLOT)},${Math.floor(ty / PLOT)}`);
-  const nearTown = (tx, ty) => Math.abs(tx - TOWN_W / 2) < 26 && Math.abs(ty - TOWN_H / 2) < 22;
+  const nearTown = (tx, ty) => Math.abs(tx - CENTER_TX) < 26 && Math.abs(ty - CENTER_TY) < 22;
   // EVERY tree is tracked by its base tile (S.allTrees) so a feature painted
   // later — the river, the ore field — can drown any that stand on it, even the
   // far DECORATIVE trees that never become fellable wood nodes. Near-town trees
@@ -386,7 +401,7 @@ function coreRadius() {
 // the town does, and a stale radius is exactly how the wall ends up drawn
 // across a wharf that got sited after the radius was first read.
 function maxSafeCoreRadius() {
-  const ccx = (PLOTS_X - 1) / 2, ccy = (PLOTS_Y - 1) / 2;
+  const ccx = CENTER_PX, ccy = CENTER_PY;
   let min = Infinity;
   for (const key of [...S.oreFieldPlots, ...S.waterPlots]) {
     const [px, py] = key.split(',').map(Number);
@@ -402,7 +417,7 @@ function maxSafeCoreRadius() {
 // OUTER building (a wharf, near a box corner) land under the wall anyway.
 // Matching the test to the wall's real shape closes that gap.
 function plotInCore(px, py) {
-  const ccx = (PLOTS_X - 1) / 2, ccy = (PLOTS_Y - 1) / 2;
+  const ccx = CENTER_PX, ccy = CENTER_PY;
   return Math.max(Math.abs(px - ccx), Math.abs(py - ccy)) <= coreRadius();
 }
 
@@ -458,7 +473,7 @@ function nextOuterPlot(biasX, biasY) {
 // for nextOuterPlot. null = no preference (nearest free outer plot).
 function outerBias(type) {
   if (type === 'sawmill') {
-    const n = nearestNode(TOWN_W / 2 * TILE, TOWN_H / 2 * TILE, 'wood');
+    const n = nearestNode(CENTER_TX * TILE, CENTER_TY * TILE, 'wood');
     return n ? { x: n.x, y: n.y } : null;
   }
   if (type === 'quarry' && S.oreFieldCenter) return S.oreFieldCenter;
@@ -475,7 +490,7 @@ function outerBias(type) {
 function farmlandAnchor() {
   if (S.farmAnchor) return S.farmAnchor;
   const r = rng((S.hold.x * 104729) ^ (S.hold.y * 65537) ^ 0xfa4b1a);
-  const ccx = (PLOTS_X - 1) / 2, ccy = (PLOTS_Y - 1) / 2;
+  const ccx = CENTER_PX, ccy = CENTER_PY;
   const baseR = coreRadius() + 3;
   let best = null, bestScore = -1;
   for (let i = 0; i < 8; i++) {
@@ -564,15 +579,20 @@ function mineNodeAvailable() {
 }
 
 function placeTownhall() {
-  const center = S.plots[0];
-  S.keepKey = `${center.px},${center.py}`;
-  S.usedPlots.add(S.keepKey);
   const recipe = S.atlas.RECIPES.townhall;
   const c = makeBuildingContainer(recipe, null);
-  c.x = center.tx * TILE + Math.floor((PLOT - recipe.w) / 2) * TILE;
-  c.y = (center.ty + PLOT - recipe.h) * TILE;
+  // The keep sits dead-centre on CENTER — the one point everything else agrees
+  // on. Footprint centred on CENTER_TX, base row on CENTER_TY.
+  c.x = (CENTER_TX - Math.floor(recipe.w / 2)) * TILE;
+  c.y = (CENTER_TY - recipe.h) * TILE;
   c.zIndex = c.y + recipe.h * TILE;
   entities.addChild(c);
+  // Reserve every plot the footprint (through its base row) touches, so no
+  // other building lands on the keep; the centre plot is the keep's key.
+  const x0 = pxToTile(c.x), y0 = pxToTile(c.y), x1 = x0 + recipe.w - 1, y1 = CENTER_TY;
+  for (let py = Math.floor(y0 / PLOT); py <= Math.floor(y1 / PLOT); py++)
+    for (let px = Math.floor(x0 / PLOT); px <= Math.floor(x1 / PLOT); px++) S.usedPlots.add(`${px},${py}`);
+  S.keepKey = `${Math.floor(CENTER_TX / PLOT)},${Math.floor(CENTER_TY / PLOT)}`;
   S.hittable.push({ x0: c.x / TILE, y0: c.y / TILE, x1: c.x / TILE + recipe.w, y1: c.y / TILE + recipe.h, label: S.hold.name + ' — the keep' });
 }
 
@@ -695,8 +715,8 @@ function makeFarmField(fp) {
 function placeOreNodes() {
   const r = rng((S.hold.x * 2654435761) ^ (S.hold.y * 40503) ^ 0x5eed);
   const a = r() * Math.PI * 2;
-  const fx = Math.round(TOWN_W / 2 + Math.cos(a) * 12);   // just outside the town, in view
-  const fy = Math.round(TOWN_H / 2 + Math.sin(a) * 11);
+  const fx = Math.round(CENTER_TX + Math.cos(a) * 12);   // just outside the town, in view
+  const fy = Math.round(CENTER_TY + Math.sin(a) * 11);
   S.oreFieldCenter = { x: fx * TILE, y: fy * TILE }; // outerBias's quarry pull, and farmlandAnchor's clearance scoring
   // Anchored in the world-sim: WHICH ores the ground yields and HOW big the
   // field is follow the hold's real ore/stone richness (from its neighborhood
@@ -800,7 +820,7 @@ function placeWater() {
 function riverTiles(r, river) {
   const width = Math.max(2, Math.min(8, Math.round(2 + river * 0.5)));
   const side = r() < 0.5 ? -1 : 1;
-  const baseX = TOWN_W / 2 + side * (20 + r() * 10);
+  const baseX = CENTER_TX + side * (20 + r() * 10);
   const amp = 3 + r() * 3, freq = 0.05 + r() * 0.04, phase = r() * Math.PI * 2;
   const tiles = [];
   for (let ty = 0; ty < TOWN_H; ty++) {
@@ -814,8 +834,8 @@ function riverTiles(r, river) {
 function lakeTiles(r, lake) {
   const rad = Math.max(3, Math.min(13, 3 + lake * 7));
   const angle = r() * Math.PI * 2, dist = 22 + r() * 10;
-  const cx = Math.round(TOWN_W / 2 + Math.cos(angle) * dist);
-  const cy = Math.round(TOWN_H / 2 + Math.sin(angle) * dist * 0.75); // the map's flatter than it's wide
+  const cx = Math.round(CENTER_TX + Math.cos(angle) * dist);
+  const cy = Math.round(CENTER_TY + Math.sin(angle) * dist * 0.75); // the map's flatter than it's wide
   const bumps = 10, wob = Array.from({ length: bumps }, () => 0.75 + r() * 0.5);
   const wobbleAt = (a) => {
     const f = ((a + Math.PI * 2) % (Math.PI * 2)) / (Math.PI * 2) * bumps;
@@ -904,7 +924,7 @@ function buildShoreSites() {
       const lk = `${lx},${ly}`;
       if (S.water.has(lk) || seen.has(lk) || S.water.has(`${lx},${ly - 1}`)) continue; // needs 2 tiles of land, stacked
       seen.add(lk);
-      sites.push({ tx: lx, ty: ly, x: lx * TILE + TILE / 2, y: ly * TILE + TILE, d: Math.hypot(lx - TOWN_W / 2, ly - TOWN_H / 2), claimed: false });
+      sites.push({ tx: lx, ty: ly, x: lx * TILE + TILE / 2, y: ly * TILE + TILE, d: Math.hypot(lx - CENTER_TX, ly - CENTER_TY), claimed: false });
     }
   }
   sites.sort((a, b) => a.d - b.d);
@@ -1129,7 +1149,7 @@ function spawnVillager() {
   }
   v.role = role; v.dir = 'down'; v.moving = false; v.idle = 0;
   v.home = null; v.haulTarget = null; // assignment model seed (see resolveHome above)
-  const start = randomTownPoint();
+  const start = homeSpawnPoint();
   v.x = start.x; v.y = start.y; v.zIndex = v.y;
   resolveHome(v);
   pickTarget(v);
@@ -1152,6 +1172,17 @@ function randomTownPoint() {
   const used = [...S.usedPlots].filter((k) => k !== S.keepKey).map((k) => k.split(',').map(Number));
   const p = used.length ? used[(Math.random() * used.length) | 0] : [S.plots[1].px, S.plots[1].py];
   return { x: (p[0] * PLOT + 1 + Math.random() * 2) * TILE, y: (p[1] * PLOT + 1 + Math.random() * 2) * TILE };
+}
+
+// homeSpawnPoint — new folk emerge from a Longhouse (their home), jittered a
+// little; fall back to the keep's centre if none is built yet.
+function homeSpawnPoint() {
+  const homes = [];
+  for (const [k, rec] of S.placed) if (k.startsWith('longhouse#') && rec.plot && rec.plot.px != null) homes.push(rec.plot);
+  if (!homes.length) return { x: CENTER_TX * TILE, y: CENTER_TY * TILE };
+  const p = homes[(Math.random() * homes.length) | 0];
+  const c = plotCenterPx(p.px, p.py);
+  return { x: c.x + (Math.random() - 0.5) * TILE * 2, y: c.y + (Math.random() - 0.5) * TILE * 2 };
 }
 
 // A worker holds a claim on the single exhaustible node (a tree) it's walking
@@ -1218,7 +1249,7 @@ function pickTarget(v) {
   if (v.role === 'soldier' && isRaided()) {
     // rush the settlement's wall (near the town centre), not the far map edge
     const a = Math.random() * Math.PI * 2;
-    goTo(v, (TOWN_W / 2 + Math.cos(a) * 13) * TILE, (TOWN_H / 2 + Math.sin(a) * 11) * TILE);
+    goTo(v, (CENTER_TX + Math.cos(a) * 13) * TILE, (CENTER_TY + Math.sin(a) * 11) * TILE);
     return;
   }
   // Miners and woodcutters make work trips: out to a node, then home to
@@ -1375,8 +1406,8 @@ function deliverCommodity(v) {
 function regrowOne() {
   if (!S.treePool || S.woodNodes.length >= (S.woodCap || 0)) return;
   for (let t = 0; t < 12; t++) {
-    const tx = Math.floor(TOWN_W / 2 + (Math.random() - 0.5) * 46);
-    const ty = Math.floor(TOWN_H / 2 + (Math.random() - 0.5) * 38);
+    const tx = Math.floor(CENTER_TX + (Math.random() - 0.5) * 46);
+    const ty = Math.floor(CENTER_TY + (Math.random() - 0.5) * 38);
     if (tx < 1 || ty < 1 || tx >= TOWN_W - 1 || ty >= TOWN_H - 1) continue;
     if (S.usedPlots.has(`${Math.floor(tx / PLOT)},${Math.floor(ty / PLOT)}`)) continue;
     if (S.water.has(`${tx},${ty}`) || S.walls.has(`${tx},${ty}`)) continue; // no saplings in the river or on the wall
@@ -1475,8 +1506,8 @@ function onFrame(ticker) {
     // Tour a fixed radius around the town centre (map middle), not the whole
     // wilderness — the amplitude is in tiles so it stays near the settlement.
     const ct = Date.now() / 1000;
-    const tx = TOWN_W / 2 + Math.sin(ct * 0.024) * 14;
-    const ty = TOWN_H / 2 + Math.cos(ct * 0.017) * 10;
+    const tx = CENTER_TX + Math.sin(ct * 0.024) * 14;
+    const ty = CENTER_TY + Math.cos(ct * 0.017) * 10;
     S.cam.x += (tx - S.cam.x) * 0.04;
     S.cam.y += (ty - S.cam.y) * 0.04;
   } else if (Date.now() - S.lastInput > 12000) {
@@ -1798,7 +1829,7 @@ function autoFund(id) {
 // planned locally, further walls are the Will's speakers to extend/gate.
 function planDefensiveSegment() {
   if (!S.usedPlots.size) return null; // nothing built yet — nowhere to wall
-  const ccx = TOWN_W / 2, ccy = TOWN_H / 2;
+  const ccx = CENTER_TX, ccy = CENTER_TY;
   const rad = coreRadius() * PLOT + 2; // the core zone, +2 tiles clearance past its buildings
   const x0 = Math.max(0, Math.round(ccx - rad)), y0 = Math.max(0, Math.round(ccy - rad));
   const x1 = Math.min(TOWN_W - 1, Math.round(ccx + rad)), y1 = Math.min(TOWN_H - 1, Math.round(ccy + rad));

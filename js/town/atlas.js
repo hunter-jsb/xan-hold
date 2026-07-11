@@ -41,8 +41,9 @@ const RECIPES = {
     { i: 36, x: 0, y: 1 }, { i: 38, x: 1, y: 1 },
     { i: 116, x: 1, y: 1 },
   ] },
-  // The market is a cozy pixel-art merchant shop with striped awning.
-  market: { w: 1.5, h: 3, image: 'market' },
+  // The market is a cozy pixel-art merchant shop with striped awning — a 2-wide,
+  // 1-deep footprint; the tall sprite rises above it (scale = w*TILE/imgWidth).
+  market: { w: 2, h: 1, image: 'market' },
   // The reliquary is a whole-image sprite (a church), not tiles. w drives its
   // on-screen size (scale = w*TILE / image width) — 2 = about half of 4.
   reliquary: { w: 2, h: 3, image: 'church' },
