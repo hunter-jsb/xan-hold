@@ -222,8 +222,15 @@ function paintGround() {
   const timber = S.hold.rich.timber; // 0..1
   const onBuild = (tx, ty) => tx < 0 || ty < 0 || tx >= TOWN_W || ty >= TOWN_H || near.has(`${Math.floor(tx / PLOT)},${Math.floor(ty / PLOT)}`);
   const nearTown = (tx, ty) => Math.abs(tx - TOWN_W / 2) < 26 && Math.abs(ty - TOWN_H / 2) < 22;
-  // A wood node remembers its tree sprites so a woodcutter can fell them.
-  const regWood = (tx, ty, sprites) => { if (nearTown(tx, ty)) S.woodNodes.push({ x: tx * TILE + TILE / 2, y: ty * TILE + TILE, sprites }); };
+  // EVERY tree is tracked by its base tile (S.allTrees) so a feature painted
+  // later — the river, the ore field — can drown any that stand on it, even the
+  // far DECORATIVE trees that never become fellable wood nodes. Near-town trees
+  // are additionally registered as wood nodes so a woodcutter can fell them.
+  S.allTrees = [];
+  const regWood = (tx, ty, sprites) => {
+    S.allTrees.push({ tx, ty, sprites });
+    if (nearTown(tx, ty)) S.woodNodes.push({ x: tx * TILE + TILE / 2, y: ty * TILE + TILE, sprites });
+  };
   const tree = (tx, ty, rec) => placeTree(tx * TILE + TILE / 2, ty * TILE + TILE, rec);
   const tall = () => treePool[(r() * 3) | 0];          // weighted 2-tile stacks
   const small = () => treePool[3 + ((r() * 2) | 0)];   // single tree or bush
@@ -682,12 +689,13 @@ function paintWaterTiles(kind, r) {
 // placeOreNodes' own clearing of its footprint) and shrink the regrowth cap.
 function clearTreesUnderWater() {
   let cleared = 0;
-  for (let i = S.woodNodes.length - 1; i >= 0; i--) {
-    const wn = S.woodNodes[i];
-    const tx = Math.floor(wn.x / TILE), ty = Math.round(wn.y / TILE) - 1; // see regWood: x=tx*TILE+TILE/2, y=(ty+1)*TILE
-    if (!S.water.has(`${tx},${ty}`)) continue;
-    for (const s of (wn.sprites || [])) { entities.removeChild(s); s.destroy(); }
-    S.woodNodes.splice(i, 1); cleared++;
+  for (let i = (S.allTrees || []).length - 1; i >= 0; i--) {
+    const t = S.allTrees[i];
+    if (!S.water.has(`${t.tx},${t.ty}`)) continue;
+    for (const s of (t.sprites || [])) { entities.removeChild(s); s.destroy(); }
+    S.allTrees.splice(i, 1);
+    const wi = S.woodNodes.findIndex((w) => w.sprites === t.sprites); // drop its wood node too, if fellable
+    if (wi >= 0) { S.woodNodes.splice(wi, 1); cleared++; }
   }
   if (S.woodCap) S.woodCap -= cleared;
 }
