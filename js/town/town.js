@@ -40,6 +40,7 @@ const S = {
   hold: null, game: null, atlas: null,
   placed: new Map(),   // typeKey -> {container}
   villagers: [], plots: [], usedPlots: new Set(),
+  oreFieldPlots: new Set(), // plot cells the ore field occupies — nextFreePlot only (not the wall/wander, which read usedPlots)
   orderLog: [], focus: null, chronicle: [],
   stewardBusy: false, lastRaidTally: 0, alarm: 0,
   hudOn: true, ui: { pinned: new Set() }, // ui.pinned: category keys clicked open (see chip() in updateHUD)
@@ -331,7 +332,8 @@ function recipeFor(type) {
 function nextFreePlot() {
   for (const p of S.plots) {
     const key = `${p.px},${p.py}`;
-    if (!S.usedPlots.has(key)) { S.usedPlots.add(key); return p; }
+    if (S.usedPlots.has(key) || S.oreFieldPlots.has(key)) continue; // oreFieldPlots: see placeOreNodes
+    S.usedPlots.add(key); return p;
   }
   return null;
 }
@@ -480,34 +482,62 @@ function placeOreNodes() {
   const fy = Math.round(TOWN_H / 2 + Math.sin(a) * 11);
   // Anchored in the world-sim: WHICH ores the ground yields and HOW big the
   // field is follow the hold's real ore/stone richness (from its neighborhood
-  // scan). Every hold has a stone outcrop; richer rock adds coal→copper→iron→gold.
+  // scan). Every hold has a stone outcrop; richer rock adds coal→copper→iron→gold
+  // — and each kind's WEIGHT (not just its presence) rises with oreR, so a rich
+  // vein doesn't just unlock metal, it makes metal common. Low-ore holds stay
+  // stone-dominated; stone's own weight tapers as oreR climbs.
   const oreR = S.hold.rich.ore, stoneR = S.hold.rich.stone;
-  const [stone, coal, copper, iron, gold] = S.atlas.oreTex;
-  const pool = [stone];
-  if (oreR >= 0.15) pool.push(coal, copper);
-  if (oreR >= 0.35) pool.push(iron);
-  if (oreR >= 0.60) pool.push(gold);
+  const [stoneTex, coalTex, copperTex, ironTex, goldTex] = S.atlas.oreTex;
+  const pool = [['stone', stoneTex, 9 - oreR * 4]];
+  if (oreR >= 0.15) pool.push(['coal', coalTex, 2 + oreR * 6], ['copper', copperTex, 1.5 + oreR * 5]);
+  if (oreR >= 0.35) pool.push(['iron', ironTex, 1 + oreR * 5]);
+  if (oreR >= 0.60) pool.push(['gold', goldTex, 0.5 + oreR * 4]);
+  const totalW = pool.reduce((sum, p) => sum + p[2], 0);
+  const pickKind = () => { let x = r() * totalW; for (const p of pool) { if ((x -= p[2]) <= 0) return p; } return pool[0]; };
   const count = 5 + Math.round((oreR + stoneR) * 8); // richer rock → a bigger field
+  // buildPlots() tiles the WHOLE map (sorted by distance from centre), and the
+  // field sits only ~12 tiles out — squarely in the plots a growing town would
+  // claim next. Reserve the field's footprint (a separate set from usedPlots,
+  // which also drives the palisade bbox and villager wander points — this is
+  // for nextFreePlot only) so a farm/sawmill/etc. never lands on a vein or a
+  // mine raised on one.
+  for (let ty = fy - 5; ty <= fy + 5; ty++) for (let tx = fx - 5; tx <= fx + 5; tx++) {
+    S.oreFieldPlots.add(`${Math.floor(tx / PLOT)},${Math.floor(ty / PLOT)}`);
+  }
+  // The forest was painted before this field existed (see boot order) — clear
+  // any trees it scattered into the footprint so a vein/mine never pokes out
+  // from under a canopy. Shrink the regrowth cap to match, so the clearing
+  // mostly sticks (see regrowOne).
+  const fieldPx = fx * TILE, fieldPy = fy * TILE, clearR = 5.5 * TILE;
+  let cleared = 0;
+  for (let i = S.woodNodes.length - 1; i >= 0; i--) {
+    const wn = S.woodNodes[i];
+    if (Math.abs(wn.x - fieldPx) > clearR || Math.abs(wn.y - fieldPy) > clearR) continue;
+    for (const s of (wn.sprites || [])) { entities.removeChild(s); s.destroy(); }
+    S.woodNodes.splice(i, 1); cleared++;
+  }
+  if (S.woodCap) S.woodCap -= cleared;
   // a bare-earth patch under the field for a quarry look
   for (let dy = -3; dy <= 3; dy++) for (let dx = -4; dx <= 4; dx++) {
     if (r() < 0.55) { const t = new Sprite(S.atlas.ground.dirt[0]); t.x = (fx + dx) * TILE; t.y = (fy + dy) * TILE; ground.addChild(t); }
   }
-  const addNode = (tex, gx, gy) => {
+  const addNode = (kind, tex, gx, gy) => {
     const s = new Sprite(tex); s.anchor.set(0.5, 1);
     s.x = gx * TILE + TILE / 2; s.y = gy * TILE + TILE; s.zIndex = s.y;
     entities.addChild(s);
-    // `tex` is kept separately from `sprite` so a claimed node (its sprite
-    // destroyed — a mine now stands there) still has a stable texture for
-    // any miner already carrying ore from it home.
-    S.oreNodes.push({ x: s.x, y: s.y, sprite: s, tex, claimedByMine: false });
+    // `tex`/`kind` are kept separately from `sprite` so a claimed node (its
+    // sprite destroyed — a mine now stands there) still has a stable texture
+    // and kind for any miner already carrying ore from it home (see CARRY).
+    S.oreNodes.push({ x: s.x, y: s.y, sprite: s, tex, kind, claimedByMine: false });
   };
-  addNode(S.atlas.boulderTex, fx, fy); // a boulder centerpiece
+  addNode('stone', S.atlas.boulderTex, fx, fy); // a boulder centerpiece — rock, not ore
   const used = new Set([`${fx},${fy}`]);
   for (let i = 0; i < count; i++) {
     let gx, gy, key, t = 0;
     do { gx = fx + Math.round((r() - 0.5) * 7); gy = fy + Math.round((r() - 0.5) * 5); key = `${gx},${gy}`; } while (used.has(key) && ++t < 12);
     used.add(key);
-    addNode(pool[(r() * pool.length) | 0], gx, gy);
+    const [kind, tex] = pickKind();
+    addNode(kind, tex, gx, gy);
   }
 }
 
@@ -772,7 +802,10 @@ const CARRY = {
   miner: {
     nodeType: 'ore', building: 'mine', exhaustible: false,
     tex: (node) => node.tex, // the vein's own ore texture — small, matches what was mined
-    scale: 0.55, dx: 3, dy: -18, workMin: 3, workRange: 3,
+    // plain rock is the common, low-value haul — carry it smaller than a real
+    // metal chunk (coal/copper/iron/gold), which keeps the old, larger size.
+    scale: (node) => node.kind === 'stone' ? 0.38 : 0.55,
+    dx: 3, dy: -18, workMin: 3, workRange: 3,
   },
 };
 
@@ -780,7 +813,8 @@ const CARRY = {
 // to the nearest matching building; deliverCommodity drops it there.
 function startHaul(v, cfg, node) {
   const s = new Sprite(cfg.tex(node));
-  s.anchor.set(0.5, 1); s.scale.set(cfg.scale); s.x = cfg.dx; s.y = cfg.dy;
+  const scale = typeof cfg.scale === 'function' ? cfg.scale(node) : cfg.scale;
+  s.anchor.set(0.5, 1); s.scale.set(scale); s.x = cfg.dx; s.y = cfg.dy;
   v.addChild(s); v.carrySprite = s; v.hauling = true;
   const home = nearestBuilding(cfg.building, v.x, v.y);
   v.haulTarget = home ? home.ref : null; // TEMP assignment — cleared on deliver/despawn
