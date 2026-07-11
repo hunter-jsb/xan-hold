@@ -247,7 +247,6 @@ function paintGround() {
   // rather than an even static. Grove count/size follow the hold's timber
   // richness (from the world-sim). Never build over the town's plots.
   const near = new Set(S.plots.slice(0, 22).map((p) => `${p.px},${p.py}`));
-  const clusterRows = (S.hold.temp < 9) ? S.atlas.clusters.autumn : S.atlas.clusters.green;
   const timber = S.hold.rich.timber; // 0..1
   const onBuild = (tx, ty) => tx < 0 || ty < 0 || tx >= TOWN_W || ty >= TOWN_H || near.has(`${Math.floor(tx / PLOT)},${Math.floor(ty / PLOT)}`);
   const nearTown = (tx, ty) => Math.abs(tx - CENTER_TX) < 26 && Math.abs(ty - CENTER_TY) < 22;
@@ -256,28 +255,41 @@ function paintGround() {
   // far DECORATIVE trees that never become fellable wood nodes. Near-town trees
   // are additionally registered as wood nodes so a woodcutter can fell them.
   S.allTrees = [];
+  // occupied — one trunk per base tile, shared across the WHOLE forest pass
+  // (grove cores, radial scatter, lone trees). Two placeTree stacks landing on
+  // the same tile used to double-thick the trunk (half the visual noise); this
+  // guard keeps every base tile singly claimed, however it got proposed.
+  const occupied = new Set();
   const regWood = (tx, ty, sprites) => {
+    occupied.add(`${tx},${ty}`);
     S.allTrees.push({ tx, ty, sprites });
     if (nearTown(tx, ty)) S.woodNodes.push({ x: tx * TILE + TILE / 2, y: ty * TILE + TILE, sprites });
   };
   const tree = (tx, ty, rec) => placeTree(tx * TILE + TILE / 2, ty * TILE + TILE, rec);
   const tall = () => treePool[(r() * 3) | 0];          // weighted 2-tile stacks
   const small = () => treePool[3 + ((r() * 2) | 0)];   // single tree or bush
-  const clusterFits = (gx, gy) => {
-    for (let cc = -1; cc <= 1; cc++) for (let rr = -2; rr <= 0; rr++) if (onBuild(gx + cc, gy + rr)) return true;
-    return false;
-  };
 
   const nGroves = Math.round(7 + timber * 20);
   for (let i = 0; i < nGroves; i++) {
     const gx = 2 + Math.floor(r() * (TOWN_W - 4));
     const gy = 2 + Math.floor(r() * (TOWN_H - 4));
     const rad = 3 + r() * (3 + timber * 3);
-    if (r() < 0.6 && !clusterFits(gx, gy)) { const cs = placeCluster(gx, gy, clusterRows); regWood(gx, gy, cs); }
+    // Dense grove CORE: a tight grid of individual tall-tree stacks at the
+    // grove centre stands in for the old 3x3 mosaic cluster — many overlapping
+    // canopies read as one lush mass, but each is its own self-contained
+    // placeTree unit (sorts by its own base row) rather than a multi-tile
+    // mosaic that other z-sorted entities could slice into mid-row.
+    if (r() < 0.6) {
+      for (let cc = -1; cc <= 1; cc++) for (let rr = -2; rr <= 0; rr++) {
+        const tx = gx + cc, ty = gy + rr;
+        if (onBuild(tx, ty) || occupied.has(`${tx},${ty}`)) continue;
+        if (r() < 0.85) { const ts = tree(tx, ty, tall()); regWood(tx, ty, ts); } // 85% fill — the 15% gaps are the clearing
+      }
+    }
     const ir = Math.ceil(rad);
     for (let dy = -ir; dy <= ir; dy++) for (let dx = -ir; dx <= ir; dx++) {
       const tx = gx + dx, ty = gy + dy;
-      if (onBuild(tx, ty)) continue;
+      if (onBuild(tx, ty) || occupied.has(`${tx},${ty}`)) continue;
       const dist = Math.hypot(dx, dy);
       if (dist > rad) continue;
       if (r() < (1 - dist / rad) ** 2 * 0.8) { const ts = tree(tx, ty, dist < rad * 0.55 ? tall() : small()); regWood(tx, ty, ts); }
@@ -285,7 +297,7 @@ function paintGround() {
   }
   // a few lone trees/bushes in the open country between groves
   for (let ty = 0; ty < TOWN_H; ty++) for (let tx = 0; tx < TOWN_W; tx++) {
-    if (onBuild(tx, ty)) continue;
+    if (onBuild(tx, ty) || occupied.has(`${tx},${ty}`)) continue;
     if (r() < 0.008 + timber * 0.012) { const ts = tree(tx, ty, r() < 0.5 ? small() : tall()); regWood(tx, ty, ts); }
   }
   // Remember the forest's near-town size + palette so felled trees can regrow.
@@ -295,7 +307,12 @@ function paintGround() {
 }
 
 // placeCluster lays a full 3x3 forest mass (base-anchored, y-sorted as one)
-// centered on column gx with its bottom row at gy.
+// centered on column gx with its bottom row at gy. RETIRED from paintGround:
+// a single 3x3 mosaic z-sorts as one blob (its per-row zIndex is identical),
+// so anything z-sorted between its rows in the live Pixi `entities` container
+// (sortableChildren) — another tree, a villager — sliced the mosaic apart.
+// Individual placeTree stacks (each its own base-row zIndex) replaced it; kept
+// here unused in case a future non-overlapping use wants it back.
 function placeCluster(gx, gy, rows) {
   const baseZ = (gy + 1) * TILE;
   const sprites = [];
