@@ -108,12 +108,27 @@ export async function loadAtlas() {
 
   // Resource-node sprites (Qoupy's ROGNs — NON-COMMERCIAL, credit required;
   // see assets/mining/CREDITS.md). 16px ore veins + a boulder centerpiece.
-  const oreTex = [];
-  for (const name of ['stoneNode', 'coalNode', 'copperNode', 'ironNode', 'goldNode']) {
-    const t = await Assets.load(`/assets/mining/nodes/${name}.png`);
+  // Loaded keyed by KIND name (oreTexByKind) so placeOreNodes (town.js) can
+  // pick a texture by kind directly instead of a positional array. Covers
+  // the full tier spread the Qoupy free set gives us: common-rock variety
+  // (stone/smallRocks/mediumRock — same visual "stone" family, different
+  // look), base metals (coal/tin/copper), a harder metal (iron), gems
+  // (jade/amethyst), precious (gold), and rare/special (bloodstone/
+  // forgeStone). keepStoneNode is left unloaded here — it reads as an
+  // architectural outcrop prop, not a minable vein.
+  const ORE_FILES = {
+    stone: 'stoneNode', smallRocks: 'smallRocks', mediumRock: 'mediumRockNode',
+    coal: 'coalNode', tin: 'tinNode', copper: 'copperNode', iron: 'ironNode',
+    jade: 'jadeNode', amethyst: 'amethystNode', gold: 'goldNode',
+    bloodstone: 'bloodstoneNode', forgeStone: 'forgeStoneNode',
+  };
+  const oreTexByKind = {};
+  for (const [kind, file] of Object.entries(ORE_FILES)) {
+    const t = await Assets.load(`/assets/mining/nodes/${file}.png`);
     t.source.scaleMode = 'nearest';
-    oreTex.push(t);
+    oreTexByKind[kind] = t;
   }
+  const oreTex = Object.values(oreTexByKind); // kept for anything wanting "all ore textures" as a flat list
   const boulderTex = await Assets.load('/assets/mining/nodes/boulderNode.png');
   boulderTex.source.scaleMode = 'nearest';
 
@@ -151,5 +166,5 @@ export async function loadAtlas() {
     edge: armmTile(19, 8),
   };
 
-  return { tex, ground, trees: TREES, clusters: CLUSTERS, fence, walk, oreTex, boulderTex, images, crops, farmDirt, cropOrder: ['greens', 'grain', 'roots'], anims: { barracks: barracksFrames }, RECIPES, PROP, HOUSE_OF, water };
+  return { tex, ground, trees: TREES, clusters: CLUSTERS, fence, walk, oreTex, oreTexByKind, boulderTex, images, crops, farmDirt, cropOrder: ['greens', 'grain', 'roots'], anims: { barracks: barracksFrames }, RECIPES, PROP, HOUSE_OF, water };
 }

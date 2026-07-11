@@ -850,29 +850,66 @@ function farmTileTex(tiles, tx, ty, crop) {
   return (ex === 0 && ey === 0) ? (S.atlas.crops[crop] || S.atlas.crops.greens) : S.atlas.farmDirt[`${ey},${ex}`];
 }
 
+// ORE_KINDS — the tier/rarity table placeOreNodes rolls against. Each entry
+// is gated (minimum rich.ore to appear at all) and weighted as a function of
+// oreR (rises with richness, so a rich vein doesn't just unlock a kind, it
+// makes it common). `tex` keys into atlas.oreTexByKind.
+//   tier 0 — common rock:  stone, smallRocks, mediumRock   (ungated — every
+//            hold gets rock-family texture variety, even at oreR=0)
+//   tier 1 — base metal:   coal, tin, copper                (oreR ≳0.04-0.12)
+//   tier 2 — harder metal: iron                              (oreR ≳0.28)
+//   tier 3 — gems:         jade, amethyst                    (oreR ≳0.32-0.40)
+//   tier 4 — precious:     gold                               (oreR ≳0.55)
+//   tier 5 — rare/special: bloodstone, forgeStone            (oreR ≳0.72-0.80)
+// NOTE: `kind` stays a single visual tag feeding the ONE `ore` resource —
+// separate ore-kind economy goods (coal/copper/... as distinct sellables)
+// would be a bigger change tied to a future "Metals" category; not this.
+const ORE_KINDS = [
+  { kind: 'stone', tex: 'stone', gate: 0, w: (o) => 9 - o * 4 },
+  { kind: 'smallRocks', tex: 'smallRocks', gate: 0, w: (o) => 1.2 + (1 - o) * 1.3 },
+  { kind: 'mediumRock', tex: 'mediumRock', gate: 0, w: (o) => 0.6 + (1 - o) * 0.8 },
+  { kind: 'coal', tex: 'coal', gate: 0.04, w: (o) => 1.5 + o * 4 },
+  { kind: 'tin', tex: 'tin', gate: 0.08, w: (o) => 1.2 + o * 4 },
+  { kind: 'copper', tex: 'copper', gate: 0.12, w: (o) => 1.3 + o * 4.5 },
+  { kind: 'iron', tex: 'iron', gate: 0.28, w: (o) => 1 + o * 5 },
+  { kind: 'jade', tex: 'jade', gate: 0.32, w: (o) => 0.8 + o * 3.5 },
+  { kind: 'amethyst', tex: 'amethyst', gate: 0.40, w: (o) => 0.7 + o * 3.5 },
+  { kind: 'gold', tex: 'gold', gate: 0.55, w: (o) => 0.5 + o * 4 },
+  { kind: 'bloodstone', tex: 'bloodstone', gate: 0.72, w: (o) => 0.4 + o * 3 },
+  { kind: 'forgeStone', tex: 'forgeStone', gate: 0.80, w: (o) => 0.35 + o * 3 },
+];
+// "small carry" family (see CARRY.miner.scale below) — plain-rock reskins
+// still haul like stone, not like a metal/gem chunk.
+const STONE_KIND = new Set(['stone', 'smallRocks', 'mediumRock']);
+
 // placeOreNodes drops an ore field into the wilderness — a rocky patch with
-// scattered veins that miners walk out to work. Seeded, so it's stable.
+// scattered veins that miners walk out to work. The field's LOCATION is
+// still hold-seeded (a geographic feature — the same hold's outcrop sits in
+// the same place every time you found it), but its COMPOSITION is NOT: which
+// kinds show up and in what mix rolls fresh via Math.random each playthrough
+// (mirrors farmlandAnchor's un-seeded siting), while staying grounded in the
+// hold's real richness — see ORE_KINDS above.
 function placeOreNodes() {
   const r = rng((S.hold.x * 2654435761) ^ (S.hold.y * 40503) ^ 0x5eed);
   const a = r() * Math.PI * 2;
   const fx = Math.round(CENTER_TX + Math.cos(a) * 12);   // just outside the town, in view
   const fy = Math.round(CENTER_TY + Math.sin(a) * 11);
   S.oreFieldCenter = { x: fx * TILE, y: fy * TILE }; // outerBias's quarry pull, and farmlandAnchor's clearance scoring
-  // Anchored in the world-sim: WHICH ores the ground yields and HOW big the
-  // field is follow the hold's real ore/stone richness (from its neighborhood
-  // scan). Every hold has a stone outcrop; richer rock adds coal→copper→iron→gold
-  // — and each kind's WEIGHT (not just its presence) rises with oreR, so a rich
-  // vein doesn't just unlock metal, it makes metal common. Low-ore holds stay
-  // stone-dominated; stone's own weight tapers as oreR climbs.
   const oreR = S.hold.rich.ore, stoneR = S.hold.rich.stone;
-  const [stoneTex, coalTex, copperTex, ironTex, goldTex] = S.atlas.oreTex;
-  const pool = [['stone', stoneTex, 9 - oreR * 4]];
-  if (oreR >= 0.15) pool.push(['coal', coalTex, 2 + oreR * 6], ['copper', copperTex, 1.5 + oreR * 5]);
-  if (oreR >= 0.35) pool.push(['iron', ironTex, 1 + oreR * 5]);
-  if (oreR >= 0.60) pool.push(['gold', goldTex, 0.5 + oreR * 4]);
-  const totalW = pool.reduce((sum, p) => sum + p[2], 0);
-  const pickKind = () => { let x = r() * totalW; for (const p of pool) { if ((x -= p[2]) <= 0) return p; } return pool[0]; };
   const count = 5 + Math.round((oreR + stoneR) * 8); // richer rock → a bigger field
+  // Every kind the richness has unlocked gets guaranteed at least one node
+  // before the rest fill in by weight (Math.random-driven, NOT the hold's
+  // seeded `r`) — so an ore-bearing hold always reads as several distinct
+  // kinds, never a single flat texture. A poor hold still gets rock-family
+  // variety (smallRocks/mediumRock) and maybe a speck of coal; a rich one
+  // gets guaranteed metals/gems too, topped up toward the rarer/higher tiers.
+  const pool = ORE_KINDS.filter((k) => oreR >= k.gate).map((k) => ({ kind: k.kind, tex: S.atlas.oreTexByKind[k.tex], w: k.w(oreR) }));
+  const totalW = pool.reduce((sum, p) => sum + p.w, 0);
+  const pickKind = () => { let x = Math.random() * totalW; for (const p of pool) { if ((x -= p.w) <= 0) return p; } return pool[0]; };
+  const guaranteed = [...pool].sort(() => Math.random() - 0.5).slice(0, Math.min(pool.length, count));
+  const queue = [...guaranteed];
+  while (queue.length < count) queue.push(pickKind());
+  queue.sort(() => Math.random() - 0.5); // don't cluster the guaranteed picks at the front of the field
   // buildPlots() tiles the WHOLE map (sorted by distance from centre), and the
   // field sits only ~12 tiles out — squarely in the plots a growing town would
   // claim next. Reserve the field's footprint (a separate set from usedPlots,
@@ -914,7 +951,7 @@ function placeOreNodes() {
     let gx, gy, key, t = 0;
     do { gx = fx + Math.round((r() - 0.5) * 7); gy = fy + Math.round((r() - 0.5) * 5); key = `${gx},${gy}`; } while (used.has(key) && ++t < 12);
     used.add(key);
-    const [kind, tex] = pickKind();
+    const { kind, tex } = queue[i];
     addNode(kind, tex, gx, gy);
   }
 }
@@ -1637,8 +1674,9 @@ const CARRY = {
     nodeType: 'ore', building: 'mine', exhaustible: false,
     tex: (node) => node.tex, // the vein's own ore texture — small, matches what was mined
     // plain rock is the common, low-value haul — carry it smaller than a real
-    // metal chunk (coal/copper/iron/gold), which keeps the old, larger size.
-    scale: (node) => node.kind === 'stone' ? 0.38 : 0.55,
+    // metal/gem chunk (coal/tin/copper/iron/jade/amethyst/gold/bloodstone/
+    // forgeStone), which keeps the old, larger size.
+    scale: (node) => STONE_KIND.has(node.kind) ? 0.38 : 0.55,
     dx: 3, dy: -18, workMin: 3, workRange: 3,
   },
 };
