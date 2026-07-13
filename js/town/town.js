@@ -100,6 +100,7 @@ async function boot() {
   S.seasonFx = makeOverlay(0xffffff); S.seasonFx.alpha = 0; // recoloured per season each frame
   S.alarmFx = makeOverlay(0xff2a1a); S.alarmFx.alpha = 0;
   S.app.stage.addChild(S.seasonFx, S.night, S.alarmFx);
+  initWeather();   // seasonal snow/leaves/petals over the scene
 
   layoutWorld();
   window.addEventListener('resize', layoutWorld);
@@ -180,10 +181,49 @@ function lerpColor(a, b, t) {
 // A faint multiply cast per season — winter cool, autumn amber, etc.
 const SEASON_TINT = { Spring: 0xdaf0d2, Summer: 0xfff0d2, Autumn: 0xf2d8b4, Winter: 0xcdd8f2 };
 
+// ---- seasonal weather (screen-space drifting particles) --------------
+// Snow in winter, tumbling leaves in autumn, petals in spring, near-none in
+// summer — purely atmospheric, a pool of flecks recycled as they fall past the
+// bottom, so seasons READ on screen, not just in the HUD.
+const WEATHER = {
+  Winter: { n: 120, tint: 0xffffff, vy: 18, sway: 12, size: 3, alpha: 0.95 },
+  Autumn: { n: 60, tint: 0xd8863a, vy: 34, sway: 34, size: 3, alpha: 0.9 },
+  Spring: { n: 55, tint: 0xffd0e8, vy: 14, sway: 26, size: 3, alpha: 0.85 },
+  Summer: { n: 16, tint: 0xfff0c0, vy: 11, sway: 8, size: 2, alpha: 0.5 },
+};
+const WEATHER_MAX = 120;
+function initWeather() {
+  S.weatherFx = new Container();
+  S.app.stage.addChild(S.weatherFx);         // above the world + night overlay; the HUD is separate DOM
+  S.weatherFx.parts = [];
+  for (let i = 0; i < WEATHER_MAX; i++) {
+    const p = new Sprite(Texture.WHITE); p.anchor.set(0.5);
+    p.x = Math.random() * window.innerWidth; p.y = Math.random() * window.innerHeight;
+    p.spd = 0.6 + Math.random() * 0.8; p.phase = Math.random() * Math.PI * 2;
+    S.weatherFx.addChild(p); S.weatherFx.parts.push(p);
+  }
+}
+function stepWeather(dt) {
+  if (!S.weatherFx) return;
+  const cfg = WEATHER[S.game.seasonName()] || WEATHER.Summer;
+  const parts = S.weatherFx.parts, W = window.innerWidth, H = window.innerHeight;
+  for (let i = 0; i < parts.length; i++) {
+    const p = parts[i];
+    if (i >= cfg.n) { p.visible = false; continue; }
+    p.visible = true; p.tint = cfg.tint; p.alpha = cfg.alpha; p.width = p.height = cfg.size;
+    p.phase += dt;
+    p.y += cfg.vy * p.spd * dt;
+    p.x += Math.sin(p.phase) * cfg.sway * dt;
+    if (p.y > H + 4) { p.y = -4; p.x = Math.random() * W; }
+    if (p.x < -4) p.x = W + 4; else if (p.x > W + 4) p.x = -4;
+  }
+}
+
 function onFrame(ticker) {
   const dt = Math.min(0.1, ticker.deltaMS / 1000);
   for (const v of S.villagers) stepVillager(v, dt);
   stepRaid(dt);   // advance any live raid wave (move raiders, resolve the clash)
+  stepWeather(dt); // drift the seasonal snow/leaves/petals
   // hover highlight rings: perma (v.home) vs temp (v.haulTarget) assignees of
   // S.hoverBuilding — only exist while hovering (see setHoverBuilding).
   if (S.hoverBuilding) refreshHighlights(Date.now());
