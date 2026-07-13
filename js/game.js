@@ -11,6 +11,8 @@ const CFG = {
   popGrowth: 0.008,       // head/s per surplus unit — needs a real food surplus AND housing headroom
   costScale: 1.16,        // per-level upgrade cost multiplier
   raidIntervalS: 135,     // mean seconds between raid checks
+  diseaseIntervalS: 180,  // mean seconds between sickness checks
+  happyEase: 0.06,        // how fast morale eases toward its target (per second)
   maxOfflineH: 12,        // cap offline catch-up
   faithPerSpeaker: 0.4,   // faith/s each speaker (1 base + 1/reliquary) wells up
   faithBase: 60,          // faithThreshold() floor (at 1 speaker)
@@ -313,6 +315,13 @@ class Game {
     this.research.insight = this.research.insight || 0;
     this.seatData = researchSeatData(this.h);
     this.discoveryTally = 0; // town.js mirrors new discoveries to the chronicle, like raids/spoilage
+    // Morale + health: happiness (0..1) eases toward happinessTarget() and gates
+    // growth/emigration; sickness strikes on a clock like raids. Pre-F5 saves
+    // default to a content, healthy hold.
+    this.happiness = this.happiness ?? 0.6;
+    this.moraleShock = this.moraleShock || 0;
+    this.diseaseClock = this.diseaseClock ?? CFG.diseaseIntervalS;
+    this.plagueTally = this.plagueTally || 0;
     // Farm fields: each is an individual plot with a size (grown by expansion)
     // and a crop. Seeded from the farm level so old saves migrate cleanly.
     this.farmPlots = this.farmPlots || [];
@@ -822,11 +831,23 @@ class Game {
     const netFood = this.foodRateTotal(rate) * dt - (eatNeed - hunger) - spoiled;
     if (hunger > 1e-9) {
       this.pop = Math.max(3, this.pop - 0.05 * this.pop * dt); // the larder ran dry
-    } else if (this.pop < this.popCap()) {
-      const surplus = Math.min(3, Math.max(0, netFood));
-      this.pop = Math.min(this.popCap(), this.pop + CFG.popGrowth * surplus * dt);
+      this.starving = true;
+      this.moraleShock = Math.min(0.5, (this.moraleShock || 0) + 0.08 * dt);
+      this._starveAccrue = (this._starveAccrue || 0) + dt;
+      if (!offline && this._starveAccrue > 8) { this.pushLog('The larder runs empty — the folk go hungry.', 'plague'); this._starveAccrue = 0; this.starveTally = (this.starveTally || 0) + 1; }
+    } else {
+      this.starving = false;
+      if (this.pop < this.popCap()) {
+        const surplus = Math.min(3, Math.max(0, netFood));
+        // Content folk multiply; the miserable don't — growth scales with morale.
+        this.pop = Math.min(this.popCap(), this.pop + CFG.popGrowth * surplus * dt * this.happiness);
+      }
+      // Real misery drives folk away — they leave for kinder holds.
+      if (this.happiness < 0.25 && this.pop > 4) this.pop = Math.max(3, this.pop - 0.02 * this.pop * ((0.25 - this.happiness) / 0.25) * dt);
     }
     this.stepRaids(dt, offline);
+    this.stepDisease(dt, offline);
+    this.stepMorale(dt);
     this.stepFaith(dt);
     this.stepResearch(dt);
   }
@@ -841,6 +862,48 @@ class Game {
       this.faith -= thresh;
       this.faithReady = true;
     }
+  }
+
+  // ---- morale + health -----------------------------------------------
+  // happinessTarget — the morale the hold trends toward: a full, varied larder
+  // and a safe, faithful, well-kept hold raise it; hunger, plague, raids, and
+  // crowding (via moraleShock + the danger/crowd terms) pull it down.
+  happinessTarget() {
+    let t = 0.45;
+    const need = this.foodEatPerS();
+    t += 0.2 * (need > 0 ? Math.min(1, this.foodTotal() / (need * 240)) : 1);   // ~a day's larder = full marks
+    t += 0.03 * FOOD_CATS.filter((c) => (this.res[c] || 0) > 1).length;         // a varied board, up to +0.15
+    t += 0.08 * Math.min(1, this.defense() / 6) - 0.15 * (this.h.danger || 0);  // safe vs. beset
+    t += 0.02 * this.speakers() + 0.03 * Math.max(0, this.level('keep') - 1);   // faith + a proud keep
+    t -= 0.25 * Math.max(0, this.pop / this.popCap() - 0.85) / 0.15;            // cramped near the cap
+    t -= (this.moraleShock || 0);                                              // recent hunger/plague/raid
+    return Math.max(0, Math.min(1, t));
+  }
+  stepMorale(dt) {
+    this.moraleShock = Math.max(0, (this.moraleShock || 0) - 0.05 * dt);        // shocks fade
+    const h = this.happiness ?? 0.6;
+    this.happiness = Math.max(0, Math.min(1, h + (this.happinessTarget() - h) * Math.min(1, CFG.happyEase * dt)));
+  }
+
+  // stepDisease — sickness strikes on a clock (like raids). Risk climbs with
+  // crowding, heat, recent spoilage (rot breeds sickness), and low morale; an
+  // outbreak takes some of the folk and dents morale. Salt on hand (keeping/
+  // sanitation) lowers the odds. Offline it's rarer, folded into catch-up.
+  stepDisease(dt, offline = false) {
+    this.diseaseClock = (this.diseaseClock ?? CFG.diseaseIntervalS) - dt;
+    if (this.diseaseClock > 0) return;
+    this.diseaseClock += CFG.diseaseIntervalS * (offline ? 3 : 1) * (0.6 + Math.random() * 0.8);
+    const crowd = Math.max(0, this.pop / this.popCap() - 0.6);
+    const heat = this.warmthNow(offline);
+    const rot = Math.min(1, (this.spoilLast || 0) * 1.5);
+    const salted = Math.min(0.2, (this.res.salt || 0) / 400);
+    const risk = 0.1 + 0.35 * crowd + 0.22 * heat + 0.2 * rot + 0.15 * (1 - (this.happiness ?? 0.6)) - salted;
+    if (Math.random() > Math.max(0.03, risk)) return;                          // a healthy season
+    const deaths = Math.min(Math.max(0, Math.floor(this.pop - 3)), Math.ceil(this.pop * (0.03 + Math.random() * 0.06 * (0.6 + heat))));
+    if (deaths > 0) this.pop -= deaths;
+    this.moraleShock = Math.min(0.6, (this.moraleShock || 0) + 0.15);
+    this.plagueTally = (this.plagueTally || 0) + 1;
+    if (!offline) this.pushLog(deaths > 0 ? `A sickness passed through the hold — ${deaths} of the folk were lost.` : 'A sickness passed through the hold, but the folk pulled through.', 'plague');
   }
 
   // stepRaids counts down a raid clock; on a strike, danger (mitigated by
@@ -867,6 +930,7 @@ class Game {
     let deaths = 0;
     if (bite > 0.55 && this.pop > 5 && Math.random() < 0.5) { deaths = Math.ceil(this.pop * bite * 0.06); this.pop -= deaths; }
     this.raidTally = (this.raidTally || 0) + 1;
+    this.moraleShock = Math.min(0.6, (this.moraleShock || 0) + (deaths > 0 ? 0.15 : 0.06)); // a raid shakes the folk
     // Offline raids are folded into one summary line by catchUp, so we
     // don't flood the chronicle with a season's worth of skirmishes.
     if (!offline) this.logRaid(taken, deaths, mit);
@@ -913,7 +977,7 @@ class Game {
 
   // ---- persistence ---------------------------------------------------
   serialize() {
-    return { res: this.res, pop: this.pop, instances: this.instances, farmPlots: this.farmPlots, faith: this.faith, research: this.research, founded: this.founded, log: this.log, raidClock: this.raidClock, lastTick: this.lastTick };
+    return { res: this.res, pop: this.pop, instances: this.instances, farmPlots: this.farmPlots, faith: this.faith, research: this.research, happiness: this.happiness, moraleShock: this.moraleShock, diseaseClock: this.diseaseClock, founded: this.founded, log: this.log, raidClock: this.raidClock, lastTick: this.lastTick };
   }
   save() { STORE.set('xanhold:' + this.h.id, JSON.stringify(this.serialize())); }
   static load(hold) {

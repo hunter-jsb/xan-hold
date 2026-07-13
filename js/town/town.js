@@ -440,6 +440,13 @@ function townTick() {
     if (last) pushChronicle('📖 ' + last.text, 'discovery');
   }
   S.lastDiscoveryTally = disc;
+  // a sickness (or a hunger line) since last look → chronicle it (both log as 'plague')
+  const pl = (S.game.plagueTally || 0) + (S.game.starveTally || 0);
+  if (pl > (S.lastPlagueTally || 0)) {
+    const last = S.game.log.find((l) => l.kind === 'plague');
+    if (last) pushChronicle('🤢 ' + last.text, 'raid');
+  }
+  S.lastPlagueTally = pl;
   renderOrders();
   updateHUD(); // folds the Folk legend + defense into the Pop chip now
 }

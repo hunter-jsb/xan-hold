@@ -28,7 +28,7 @@ own commit so anything can be rolled back.
 | F2 | per-instance building levels + upgrade action | game.js, buildings.js, town.js, hud.js | ✅ |
 | F3 | keep as an upgradeable building (physical + functional) | game.js, buildings.js, town.js | ✅ |
 | F4 | seasons + clearer day/night | game.js, terrain.js, town.js, hud.js | ✅ |
-| F5 | starvation, disease, unhappiness | game.js, hud.js | ☐ |
+| F5 | starvation, disease, unhappiness | game.js, hud.js | ✅ |
 | F6 | research — discover geology/salt/lore from world.js | new research.js, game.js, hud.js, serve.mjs | ✅ |
 | F7 | sectioned walls + wall levels | walls.js, orders.js, state.js | ☐ |
 | F8 | people fight raids; pathing affects clash | villagers.js, game.js, walls.js | ☐ |
@@ -46,6 +46,15 @@ the REAL local rock/rockAge (geology), salt/salinity (deposits), drainage/river,
 elevation, nearby named features, and realm history. Nothing is invented.
 
 ## Log
+- 2026-07-13: **F5 done** — starvation, disease, unhappiness. A `happiness`
+  stat (0..1) eases toward happinessTarget() (raised by a full/varied larder,
+  safety, faith, a proud keep; lowered by hunger, crowding, and moraleShock from
+  raids/plague) and GATES pop growth + drives emigration below 0.25. Disease
+  strikes on a clock like raids — risk from crowding/heat/recent-spoilage/low-
+  morale, salt lowers it — taking folk + denting morale. Starvation now sets a
+  flag, hits morale, and chronicles. HUD Pop chip gains a "mood" footer; plague/
+  hunger mirror to the chronicle. Persisted + migrated. Harness now 62 assertions
+  (starvation shrinks pop, morale bounded, fed holds stay healthy).
 - 2026-07-13: **F6 done** (delegated to the Sonnet research subagent, reviewed +
   verified by me). Research discovers the REAL simulated world: 14 discoveries
   (7 sciences + 7 lore) each gated on the hold's actual seed-42 seat data

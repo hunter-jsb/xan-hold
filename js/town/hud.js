@@ -113,7 +113,12 @@ export function updateHUD() {
   // Food the folk eat each second (pop × appetite) — drawn perishable-first from
   // the larder, so it's easy to miss on the per-food rows; surface the total here.
   const foodFoot = `<div class="chip-foot"><span>${icon('food', 'sm')} folk eat</span><b class="down">−${g.foodEatPerS().toFixed(1)}/s</b></div>`;
-  const popChip = chip('pop', `${icon(CAT_ICON.pop)}${Math.floor(g.pop)}/${g.popCap()}`, folk + foodFoot + houseFoot + defFoot + troopFoot);
+  // Mood + health: the folk's morale (gates growth + emigration) and whether
+  // they're going hungry right now.
+  const hp = Math.round((g.happiness ?? 0.6) * 100);
+  const moodGlyph = hp > 66 ? '😊' : hp > 40 ? '😐' : '😟';
+  const moodFoot = `<div class="chip-foot"><span>${moodGlyph} mood</span><b class="${hp >= 50 ? 'up' : 'down'}">${hp}%${g.starving ? ' · hungry' : ''}</b></div>`;
+  const popChip = chip('pop', `${icon(CAT_ICON.pop)}${Math.floor(g.pop)}/${g.popCap()}`, folk + foodFoot + moodFoot + houseFoot + defFoot + troopFoot);
 
   // Faith: a meter toward the Will's next invocation, not a tradeable good —
   // its own chip (not under Pop) because the speaker COUNT that fills it is
