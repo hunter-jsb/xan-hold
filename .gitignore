@@ -1,3 +1,4 @@
 node_modules/
 .claude/
 .serve.log
+debug-dump.json

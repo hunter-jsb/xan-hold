@@ -15,7 +15,7 @@
 // falls back to its local heuristic — so the screensaver never stalls.
 
 import { createServer } from 'http';
-import { readFile } from 'fs/promises';
+import { readFile, writeFile } from 'fs/promises';
 import { extname, join, normalize } from 'path';
 import { fileURLToPath } from 'url';
 import { execFile } from 'child_process';
@@ -176,6 +176,12 @@ const server = createServer(async (req, res) => {
     catch { return send(res, 400, JSON.stringify({ error: 'bad json', speakers: [] }), MIME['.json']); }
     const decision = await willDecide(state);   // never throws — soft-fails to empty
     return send(res, 200, JSON.stringify(decision), MIME['.json']);
+  }
+  // Debug seam (temporary): the browser POSTs a live-state snapshot here (press
+  // 'i' in town) and we write it to debug-dump.json for GPU-less inspection.
+  if (req.method === 'POST' && new URL(req.url, 'http://x').pathname === '/debug') {
+    try { await writeFile(join(ROOT, 'debug-dump.json'), await readBody(req)); return send(res, 200, 'ok'); }
+    catch (e) { return send(res, 500, String(e && e.message || e)); }
   }
   if (req.method === 'GET') return serveStatic(req, res);
   send(res, 405, 'method not allowed');

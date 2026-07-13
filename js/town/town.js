@@ -454,6 +454,27 @@ function townTick() {
 
 
 
+// dumpState POSTs a live diagnostic snapshot to the local server
+// (→ debug-dump.json) so state can be inspected without a GPU. Press 'i'.
+function dumpState() {
+  const g = S.game, B = window.XANGAME.BUILDINGS;
+  const snap = {
+    at: new Date().toISOString(),
+    pop: Math.floor(g.pop), popCap: g.popCap(), happiness: +(g.happiness ?? 0).toFixed(2), starving: !!g.starving,
+    res: Object.fromEntries(Object.entries(g.res).map(([k, v]) => [k, Math.round(v)])),
+    caps: Object.fromEntries(Object.entries(g.caps()).map(([k, v]) => [k, Math.round(v)])),
+    levels: Object.fromEntries(B.map((b) => [b.id, g.level(b.id)]).filter(([, v]) => v)),
+    counts: Object.fromEntries(B.map((b) => [b.id, g.count(b.id)]).filter(([, v]) => v)),
+    instances: g.instances,
+    orders: S.orderLog.map((o) => `${o.type}:${o.target || o.section || ''}=${o.status}`),
+    focus: S.focus, speakers: g.speakers(), parishes: S.parishSizes,
+    insight: Math.round(g.research.insight), discoveries: g.research.done,
+    sectionTier: S.sectionTier, wallTiles: S.walls.size, placed: [...S.placed.keys()],
+  };
+  fetch('/debug', { method: 'POST', body: JSON.stringify(snap, null, 2) })
+    .then(() => pushChronicle('📋 state dumped', 'note')).catch(() => {});
+}
+
 // ---- input ----------------------------------------------------------
 function wireKeys() {
   addEventListener('keydown', (e) => {
@@ -462,6 +483,7 @@ function wireKeys() {
     if (k === 'p') showStewardAsk();
     else if (k === 'h') { S.hudOn = !S.hudOn; document.getElementById('hud').style.display = S.hudOn ? '' : 'none'; }
     else if (k === 'm') location.href = '/index.html';
+    else if (k === 'i') dumpState();   // debug: POST a live-state snapshot for inspection (temporary)
     else if (k === '=' || k === '+') setZoom(S.scale + 1);
     else if (k === '-' || k === '_') setZoom(S.scale - 1);
     else if (k === 'r') {
