@@ -61,6 +61,7 @@ export function initHUD(away) {
     S.ui.logFilter = chip.dataset.filter;
     S.ui.willPopout.setContent(renderWillDetail());
   });
+  S.ui.archivePopout = makePopout({ title: 'Scholars’ Archive' }); // the Study chip's full, scrollable view
   renderWillPanel();
   updateHUD();
   initResTip();
@@ -168,7 +169,8 @@ export function updateHUD() {
   const studyFoot = nd
     ? `<div class="chip-foot"><span>toward ${nd.name}</span><b>${Math.floor(g.research.insight)}/${nd.cost}</b></div>`
     : `<div class="chip-foot"><span>study</span><b>all its ground can teach</b></div>`;
-  const studyRows = (disc.length ? group('Sciences', disc.filter((d) => d.cat === 'science')) + group('Lore', disc.filter((d) => d.cat === 'lore')) : '<div class="dim">no discoveries yet</div>') + studyFoot;
+  const openHint = '<div class="chip-open-hint">⤢ click to open the Scholars’ Archive</div>';
+  const studyRows = (disc.length ? group('Sciences', disc.filter((d) => d.cat === 'science')) + group('Lore', disc.filter((d) => d.cat === 'lore')) : '<div class="dim">no discoveries yet</div>') + studyFoot + openHint;
   const studyChip = chip('study', `📖 ${g.research.done.length}/${RESEARCH_TOTAL}`, studyRows);
 
   document.getElementById('resstrip').innerHTML = catChips + popChip + faithChip + studyChip + skyChip;
@@ -182,9 +184,11 @@ export function initChipToggle() {
   const bar = document.getElementById('resstrip');
   if (!bar) return;
   bar.addEventListener('click', (e) => {
+    if (e.target.closest && e.target.closest('.chip-open-hint')) { openArchive(); return; } // the in-expand "open" affordance
     const head = e.target.closest && e.target.closest('.chip-head');
     if (!head) return;
     const cat = head.closest('.chip').dataset.cat;
+    if (cat === 'study') { openArchive(); return; } // the Study chip opens its Archive, like the Will panel
     if (S.ui.pinned.has(cat)) S.ui.pinned.delete(cat); else S.ui.pinned.add(cat);
     updateHUD();
   });
@@ -396,6 +400,35 @@ export function renderWillDetail() {
         </div>`).join('') : '<div class="dim">The speakers kept silence.</div>'}
     </div>`).join('') : '<div class="dim">The Will has not yet spoken.</div>';
   return `${invs}<div class="wd-chron-t">The Chronicle</div>${logFilterChips()}<div class="will-log wd-full-log">${fullLogHTML()}</div>`;
+}
+
+// ---- Scholars' Archive (the Study chip's popout) ---------------------
+// openArchive — the Study chip's click target: the full, scrollable telling of
+// what the hold has learned of its own deep-simulated world. Rebuilt fresh on
+// open (same live-ish contract as openWillDetail).
+export function openArchive() {
+  if (!S.ui.archivePopout) return;
+  S.ui.archivePopout.setTitle(`Scholars’ Archive — ${S.hold.name}`);
+  S.ui.archivePopout.open(renderArchiveDetail());
+}
+
+// renderArchiveDetail — a framing header, then every made discovery grouped
+// Sciences / Lore (each: name, the real sim fact it read, and its boon), then
+// what the hold studies next + its insight progress.
+export function renderArchiveDetail() {
+  const g = S.game, disc = discoveredList();
+  const entry = (d) => `<div class="arc-entry">
+    <div class="arc-name">${d.name}</div>
+    <div class="arc-flavor">${d.flavor}.</div>
+    <div class="arc-unlock">${d.unlock}</div></div>`;
+  const section = (title, arr) => `<div class="wd-chron-t">${title}</div>`
+    + (arr.length ? arr.map(entry).join('') : '<div class="dim">none charted yet</div>');
+  const nd = nextDiscovery();
+  const next = nd
+    ? `<div class="arc-next"><b>Studying next:</b> ${nd.name} <span class="dim">— insight ${Math.floor(g.research.insight)}/${nd.cost}</span></div>`
+    : '<div class="arc-next dim">The hold has learned all its ground and history can teach.</div>';
+  const header = `<div class="arc-head">${S.hold.name} keeps its own archive — each entry a true reading of the deep-simulated world it stands in: its rock and waters, its bloodline and crown, its rivals and the wyrms in the hills. <b>${disc.length}</b> of ${RESEARCH_TOTAL} charted.</div>`;
+  return header + next + section('Sciences', disc.filter((d) => d.cat === 'science')) + section('Lore', disc.filter((d) => d.cat === 'lore'));
 }
 
 export function pushChronicle(text, kind) {

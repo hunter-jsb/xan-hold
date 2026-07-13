@@ -7,13 +7,26 @@ import { S } from './state.js';
 
 const { RESEARCH } = window.XANGAME;
 
-// discoveredList — every discovery the hold has made, with its cited flavor,
-// newest first. Each: {id, name, cat, flavor}.
+// unlockText — a readable summary of a resolved effect object (what a discovery
+// granted), formatted from the same numbers the live-read bonuses use.
+export function unlockText(e) {
+  const parts = [];
+  if (e.mul) for (const [k, v] of Object.entries(e.mul)) parts.push(`${v >= 1 ? '+' : '−'}${Math.round(Math.abs(v - 1) * 100)}% ${k}`);
+  if (e.def) parts.push(`+${e.def} defense`);
+  if (e.pop) parts.push(`+${e.pop} folk cap`);
+  if (e.foodEat && e.foodEat !== 1) parts.push(`${e.foodEat < 1 ? '−' : '+'}${Math.round(Math.abs(e.foodEat - 1) * 100)}% appetite`);
+  if (e.spoilMul && e.spoilMul !== 1) parts.push(`${e.spoilMul < 1 ? '−' : '+'}${Math.round(Math.abs(e.spoilMul - 1) * 100)}% spoilage`);
+  if (e.preserveAdd) parts.push(`+${Math.round(e.preserveAdd * 100)}% food preserved`);
+  return parts.length ? parts.join(', ') : 'lore only — no boon';
+}
+
+// discoveredList — every discovery the hold has made, with its cited flavor and
+// what it unlocked, newest first. Each: {id, name, cat, flavor, unlock}.
 export function discoveredList() {
   const g = S.game;
   return g.research.done.slice().reverse().map((id) => {
     const d = window.XANGAME.RESEARCH_BY_ID[id];
-    return d && { id: d.id, name: d.name, cat: d.cat, flavor: d.flavor(g.h, g.seatData) };
+    return d && { id: d.id, name: d.name, cat: d.cat, flavor: d.flavor(g.h, g.seatData), unlock: unlockText(g.effOf(d)) };
   }).filter(Boolean);
 }
 

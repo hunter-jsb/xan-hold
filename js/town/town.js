@@ -12,7 +12,7 @@ import { loadWalls } from './walls.js';
 import { buildPlots, paintGround, placeOreNodes, placeWater } from './terrain.js';
 import { placeTownhall, reconcileBuildings, districtOf, coreBounds } from './buildings.js';
 import { stepVillager, reconcileVillagers } from './villagers.js';
-import { initHUD, updateHUD, renderOrders, pushChronicle } from './hud.js';
+import { initHUD, updateHUD, renderOrders, pushChronicle, renderArchiveDetail } from './hud.js';
 import { executeOrders, localSteward } from './orders.js';
 import { callWill, initStewardAsk, showStewardAsk } from './will.js';
 import { spawnRaidWave, stepRaid } from './raids.js';
@@ -440,11 +440,13 @@ function townTick() {
     if (last) pushChronicle('🥀 ' + last.text, 'note');
   }
   S.lastSpoilTally = st;
-  // a new discovery since last look → chronicle it (mirrors raids/spoilage)
+  // a new discovery since last look → chronicle it (mirrors raids/spoilage),
+  // and refresh the Archive if the lord has it open (like the Will popout).
   const disc = S.game.discoveryTally || 0;
   if (disc > (S.lastDiscoveryTally || 0)) {
     const last = S.game.log.find((l) => l.kind === 'discovery');
     if (last) pushChronicle('📖 ' + last.text, 'discovery');
+    if (S.ui.archivePopout && S.ui.archivePopout.isOpen()) S.ui.archivePopout.setContent(renderArchiveDetail());
   }
   S.lastDiscoveryTally = disc;
   // a sickness (or a hunger line) since last look → chronicle it (both log as 'plague')

@@ -153,29 +153,47 @@ function domRockId(h) {
   for (const [id, c] of Object.entries((h.n && h.n.rock) || {})) if (c > bc) { bc = c; best = +id; }
   return best;
 }
-// researchSeatData reads the seat-cell fields deriveHold doesn't surface
-// (rockAge, drainage, realm age), straight from window.WORLD. Constant per hold.
+// researchSeatData reads the sim's world story around a seat that deriveHold
+// doesn't surface — the seat-cell geology (rockAge/drainage), the realm's age
+// and crown, the nearest rival realm + neighboring hall, and the deep-time
+// climate — straight from window.WORLD. Constant per hold (never serialized).
 function researchSeatData(h) {
-  let rockAge = 0, drainage = 0, realmAge = 1;
+  let rockAge = 0, drainage = 0, realmAge = 1, crownName = '', rival = null, neighbor = null;
+  let era = 'now', kya = 0, glacialIndex = 0;
   const X = window.XAN;
   if (X) {
-    const i = X.idx(h.x, h.y);
-    rockAge = X.W.rockAge[i] || 0; drainage = X.W.drainage[i] || 0;
-    const rm = X.W.realms.find((r) => r.name === h.realm);
+    const W = X.W, i = X.idx(h.x, h.y);
+    rockAge = W.rockAge[i] || 0; drainage = W.drainage[i] || 0;
+    era = W.era; kya = W.kya; glacialIndex = (W.climate && W.climate.glacialIndex) || 0;
+    const rm = W.realms.find((r) => r.name === h.realm);
     if (rm) realmAge = rm.age || 1;
+    const crown = W.realms.find((r) => r.isCrown);
+    crownName = crown ? crown.name : '';
+    // nearest OTHER realm's leading seat — a rival power at the border.
+    rival = W.realms.filter((r) => r.name !== h.realm)
+      .map((r) => ({ name: r.name, dist: Math.abs(r.seatX - h.x) + Math.abs(r.seatY - h.y), crown: r.isCrown }))
+      .sort((a, b) => a.dist - b.dist)[0] || null;
+    // nearest neighboring hall (not this seat) — its loyalty + war-pressure name it ally or threat.
+    const nm = {}; for (const r of W.realms) nm[r.id] = r.name;
+    neighbor = W.seats.filter((s) => !(s.x === h.x && s.y === h.y))
+      .map((s) => ({ name: s.name, dist: Math.abs(s.x - h.x) + Math.abs(s.y - h.y), allegiance: s.allegiance, pressure: s.pressure, realm: nm[s.realm] || 'the free holds' }))
+      .sort((a, b) => a.dist - b.dist)[0] || null;
   }
-  return { rockAge, drainage, realmAge, rock: domRockId(h), elev: Math.round(h.elev || 0) };
+  return { rockAge, drainage, realmAge, rock: domRockId(h), elev: Math.round(h.elev || 0), crownName, isCrown: !!h.realmCrown, rival, neighbor, era, kya, glacialIndex };
 }
 // nearest named feature of a kind within the hold's charted radius (hold.nearby).
 function nearFeat(h, ...kinds) { return (h.nearby || []).find((f) => kinds.includes(f.kind)) || null; }
+// all charted features of the given kinds (for a census, not just the nearest).
+function nearFeats(h, ...kinds) { return (h.nearby || []).filter((f) => kinds.includes(f.kind)); }
 // rockAgeBand — the geologic depth of the surface, against the sim's own marks
 // (meltKya≈20, LGM≈205ka from era.go).
 function rockAgeBand(ka) { return ka < 20 ? 'post-Melt' : ka < 100 ? 'Holocene' : ka < 205 ? 'glacial' : 'Old Ice'; }
 
-// The catalogue: 7 Sciences + 7 Lore. `gate(h, sd)` is the data test (only
-// discoverable where the seed-42 ground supports it); `flavor` cites the real
-// value; `eff` (object or (h,sd)=>object) is applied live. `requires` gates a
-// small dependency tree; `cost` is insight (tier 1≈40 / 2≈90 / 3≈160).
+// The catalogue: 7 Sciences (the ground) + 14 Lore (the world's history —
+// bloodline, crown, rivals, neighbors, deep-time ice, the wyrms). `gate(h, sd)`
+// is the data test (only discoverable where the seed-42 world supports it);
+// `flavor` cites the real value; `eff` (object or (h,sd)=>object) is applied
+// live. `requires` gates a small tree; `cost` is insight (tier 1≈40 / 2≈90 / 3≈160).
 const RESEARCH = [
   // --- Sciences ---
   { id: 'bedrock', cat: 'science', name: 'Bedrock Survey', tier: 1, cost: 40, requires: [],
@@ -209,12 +227,36 @@ const RESEARCH = [
   // --- Lore ---
   { id: 'ancestry', cat: 'lore', name: 'Whose the Land', tier: 1, cost: 40, requires: [],
     gate: () => true,
-    flavor: (h) => `${h.ancestry === 'Northern' ? 'the mammoth-blood of the frozen north' : h.ancestry === 'Coastal' ? 'shore-folk of the receded coast' : 'the hybrid river-stock of the cradle'} settled it`,
+    flavor: (h) => `${h.ancestry === 'Northern' ? 'the mammoth-blood of the frozen north — kin who held the high refugia through the ice' : h.ancestry === 'Coastal' ? 'shore-folk of the receded coast — the first fielders of the drawn-down shelf' : 'the hybrid river-stock of the cradle, come south after the Melt'} settled it`,
     eff: { pop: 1 } },
+  { id: 'migration', cat: 'lore', name: 'The Peoples’ Road', tier: 2, cost: 90, requires: ['ancestry'],
+    gate: () => true,
+    flavor: (h) => (h.ancestry === 'Northern' ? 'its folk trace to the mountain refugia — miners and hunters of the high cold ground' : h.ancestry === 'Coastal' ? 'its folk trace to the drawn-down shelf — the elder shore-farmers' : 'its folk followed the new rivers into the cradle, the youngest of the three peoples'),
+    eff: (h) => (h.ancestry === 'Northern' ? { mul: { ore: 1.05 } } : h.ancestry === 'Coastal' ? { mul: { coin: 1.05 } } : { mul: { food: 1.05 } }) },
   { id: 'realmage', cat: 'lore', name: 'The Realm’s Age', tier: 1, cost: 40, requires: [],
     gate: () => true,
-    flavor: (h, sd) => `${h.realm} has stood ${sd.realmAge} sealed age${sd.realmAge === 1 ? '' : 's'}`,
+    flavor: (h, sd) => `${h.realm}${sd.isCrown ? ', the crown,' : ''} has stood ${sd.realmAge} sealed age${sd.realmAge === 1 ? '' : 's'}`,
     eff: (h, sd) => ({ mul: { coin: 1 + 0.05 * sd.realmAge } }) },
+  { id: 'crownstate', cat: 'lore', name: 'Crown or Peer', tier: 1, cost: 40, requires: [],
+    gate: () => true,
+    flavor: (h, sd) => (sd.isCrown ? `${h.realm} is the crown of the river-realms — the downstream heartland power` : `${h.realm} is a peer-realm; ${sd.crownName || 'the crown'} wears the crown`),
+    eff: (h, sd) => (sd.isCrown ? { mul: { coin: 1.1 } } : { def: 1 }) },
+  { id: 'rivals', cat: 'lore', name: 'The Rival Realms', tier: 2, cost: 90, requires: ['realmage'],
+    gate: (h, sd) => !!sd.rival && sd.rival.dist <= 40,
+    flavor: (h, sd) => `the seat of ${sd.rival.name} lies ${sd.rival.dist} off — ${sd.rival.crown ? 'the crown itself' : 'a rival power'} across the marches`,
+    eff: { mul: { coin: 1.06 } } },
+  { id: 'neighbors', cat: 'lore', name: 'The Bordering Halls', tier: 2, cost: 90, requires: ['realmage'],
+    gate: (h, sd) => !!sd.neighbor && sd.neighbor.dist <= 12,
+    flavor: (h, sd) => `the hall ${sd.neighbor.name} stands ${sd.neighbor.dist} off, sworn to ${sd.neighbor.realm} (loyalty ${(sd.neighbor.allegiance || 0).toFixed(2)})`,
+    eff: { pop: 1 } },
+  { id: 'warpressure', cat: 'lore', name: 'The Contested Frontier', tier: 2, cost: 90, requires: [],
+    gate: (h) => (h.pressure || 0) >= 5,
+    flavor: (h) => `war-pressure bears on it at ${h.pressure} — the wilds and rival banners both press here`,
+    eff: { def: 1 } },
+  { id: 'deeptime', cat: 'lore', name: 'The Long Ice', tier: 1, cost: 40, requires: [],
+    gate: () => true,
+    flavor: (h, sd) => `the world stands at ${sd.era} (${sd.kya}ka), glacial index ${sd.glacialIndex.toFixed(2)} — ${sd.glacialIndex < 0.2 ? 'the warm present, long after the Melt' : sd.glacialIndex > 0.6 ? 'deep in the Old Ice' : 'a cooling age'}`,
+    eff: (h, sd) => (sd.glacialIndex >= 0.5 ? { spoilMul: 0.92 } : { mul: { food: 1.05 } }) },
   { id: 'allegiance', cat: 'lore', name: 'The Crown’s Reach', tier: 1, cost: 40, requires: [],
     gate: () => true,
     flavor: (h) => `its loyalty to ${h.realm} reads ${(h.allegiance || 0).toFixed(2)}`,
@@ -233,8 +275,12 @@ const RESEARCH = [
     eff: { mul: { food: 1.06, ore: 1.04 } } },
   { id: 'dragonlairs', cat: 'lore', name: 'Dragon Lairs Marked', tier: 3, cost: 160, requires: ['realmage'],
     gate: (h) => !!nearFeat(h, 'den', 'nest', 'rookery'),
-    flavor: (h) => { const f = nearFeat(h, 'den', 'nest', 'rookery'); return `the ${f.kind} ${f.name} is charted ${f.dist} off`; },
+    flavor: (h) => { const f = nearFeat(h, 'den', 'nest', 'rookery'); const w = { den: 'dragon den', nest: 'drake nest', rookery: 'wyvern rookery' }[f.kind]; return `the ${w} ${f.name} is charted ${f.dist} off — the watch keeps its bearing`; },
     eff: { def: 1 } },
+  { id: 'wyrmcensus', cat: 'lore', name: 'The Wyrm Census', tier: 3, cost: 160, requires: ['dragonlairs'],
+    gate: (h) => nearFeats(h, 'den', 'nest', 'rookery').length >= 2,
+    flavor: (h) => { const l = nearFeats(h, 'den', 'nest', 'rookery'); const d = l.filter((f) => f.kind === 'den').length, n = l.filter((f) => f.kind === 'nest').length, r = l.filter((f) => f.kind === 'rookery').length; return `${l.length} lairs within reach (${d} dragon, ${n} drake, ${r} wyvern) — this is dragon-haunted country`; },
+    eff: { mul: { ore: 1.05 } } }, // the wyrm-hills are mineral country — a boon mastered, not another wall
 ];
 const RESEARCH_BY_ID = Object.fromEntries(RESEARCH.map((d) => [d.id, d]));
 

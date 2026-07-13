@@ -175,6 +175,23 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); }
 .wd-chron-t { font-family: var(--serif); color: var(--gold); font-size: 13px; margin-top: 10px; }
 .wd-full-log { margin-top: 2px; } /* chips above already carry the gap — don't double it */
 
+/* Scholars' Archive (renderArchiveDetail) — the Study chip's popout: a framing
+   header, then each discovery as name / real sim-fact / boon. Reuses wd-chron-t
+   for the Sciences/Lore headers so it's one family with the Will popout. */
+.arc-head { font-size: 12px; color: var(--dim); line-height: 1.5; margin-bottom: 10px;
+  padding-bottom: 9px; border-bottom: 1px solid var(--frame-soft); }
+.arc-head b { color: var(--gold); }
+.arc-next { font-size: 12px; margin: 4px 0 8px; }
+.arc-entry { padding: 6px 0; }
+.arc-entry + .arc-entry { border-top: 1px solid var(--divider); }
+.arc-name { font-family: var(--serif); color: var(--gold); font-size: 13px; letter-spacing: .02em; }
+.arc-flavor { color: var(--ink); margin: 2px 0 3px; }
+.arc-unlock { font-size: 11px; color: #8fce7a; } /* the boon — green, apart from the flavor */
+
+/* the Study chip's "open the Archive" affordance (in its hover-expand) */
+.chip-open-hint { font-size: 11px; color: var(--gold); opacity: .8; margin-top: 6px;
+  padding-top: 5px; border-top: 1px solid var(--divider); cursor: pointer; }
+
 /* full-log filter chips (the popout's kind filter row) — active state mirrors
    .chip.pinned's inset-glow affordance from the resource chips. */
 .log-filters { display: flex; flex-wrap: wrap; gap: 5px; margin: 6px 0 8px; }
