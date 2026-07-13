@@ -15,6 +15,7 @@ import { stepVillager, reconcileVillagers } from './villagers.js';
 import { initHUD, updateHUD, renderOrders, pushChronicle } from './hud.js';
 import { executeOrders, localSteward } from './orders.js';
 import { callWill, initStewardAsk, showStewardAsk } from './will.js';
+import { spawnRaidWave, stepRaid } from './raids.js';
 
 const { allHolds } = window.XAN;
 const { Game, BY_ID, CFG } = window.XANGAME;
@@ -156,6 +157,7 @@ const SEASON_TINT = { Spring: 0xdaf0d2, Summer: 0xfff0d2, Autumn: 0xf2d8b4, Wint
 function onFrame(ticker) {
   const dt = Math.min(0.1, ticker.deltaMS / 1000);
   for (const v of S.villagers) stepVillager(v, dt);
+  stepRaid(dt);   // advance any live raid wave (move raiders, resolve the clash)
   // hover highlight rings: perma (v.home) vs temp (v.haulTarget) assignees of
   // S.hoverBuilding — only exist while hovering (see setHoverBuilding).
   if (S.hoverBuilding) refreshHighlights(Date.now());
@@ -418,13 +420,11 @@ function townTick() {
   reconcileBuildings();
   reconcileVillagers();
 
-  // new raid since last look → sound the alarm + chronicle it
+  // A raid was decided since last look: keep isRaided() true briefly (the muster
+  // boost) and spawn the LIVE wave (raids.js) for the folk to fight — raids.js
+  // chronicles the clash itself. Offline raids stayed abstract (no wave).
   const rt = S.game.raidTally || 0;
-  if (rt > S.lastRaidTally) {
-    S.alarm = 1.2;
-    const last = S.game.log.find((l) => l.kind === 'raid');
-    if (last) pushChronicle('⚔ ' + last.text, 'raid');
-  }
+  if (S.game.raidWave) { spawnRaidWave(S.game.raidWave.n, S.game.raidWave.bite); S.game.raidWave = null; }
   setTimeout(() => { S.lastRaidTally = rt; }, 2500);
   // a batch of stores turned since last look → chronicle it (mirrors raids)
   const st = S.game.spoilTally || 0;

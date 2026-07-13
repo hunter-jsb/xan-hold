@@ -9,6 +9,7 @@ import { goTo } from './pathfind.js';
 import { nearestNode, STONE_KIND } from './terrain.js';
 import { nearestSite, finalizeSite } from './buildings.js';
 import { troopCap } from './walls.js';
+import { raidActive, nearestRaider } from './raids.js';
 
 // ---- villagers ------------------------------------------------------
 export function roleWeights() {
@@ -160,8 +161,14 @@ export function releaseClaim(v) {
 
 
 export function pickTarget(v) {
+  if (v.role === ROLE.SOLDIER && raidActive()) {
+    // Intercept the nearest raider — the folk FIGHT the wave (see raids.js),
+    // meeting them wherever the walls funnel them (toward the gates).
+    const r = nearestRaider(v.x, v.y);
+    if (r) { goTo(v, r.x, r.y); return; }
+  }
   if (v.role === ROLE.SOLDIER && isRaided()) {
-    // rush the settlement's wall (near the town centre), not the far map edge
+    // Alarm up but no wave yet — muster at the wall ring near the town centre.
     const a = Math.random() * Math.PI * 2;
     goTo(v, (CENTER_TX + Math.cos(a) * 13) * TILE, (CENTER_TY + Math.sin(a) * 11) * TILE);
     return;

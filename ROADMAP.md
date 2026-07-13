@@ -31,7 +31,7 @@ own commit so anything can be rolled back.
 | F5 | starvation, disease, unhappiness | game.js, hud.js | ✅ |
 | F6 | research — discover geology/salt/lore from world.js | new research.js, game.js, hud.js, serve.mjs | ✅ |
 | F7 | sectioned walls + wall levels | walls.js, orders.js, state.js | ✅ |
-| F8 | people fight raids; pathing affects clash | villagers.js, game.js, walls.js | ☐ |
+| F8 | people fight raids; pathing affects clash | villagers.js, game.js, town.js, raids.js, state.js | ✅ |
 | F9 | speaker fealty (pop→speaker, head-speaker worker distro) | villagers.js, orders.js, will.js, serve.mjs | ☐ |
 | F10 | speaker UI cleanup + filterable log popout | hud.js, ui.js, town.css | ✅ |
 | F11 | building relocation as a build action (wall-aware) | buildings.js, orders.js, town.js | ☐ |
@@ -46,6 +46,17 @@ the REAL local rock/rockAge (geology), salt/salinity (deposits), drainage/river,
 elevation, nearby named features, and realm history. Nothing is invented.
 
 ## Log
+- 2026-07-13: **F8 done** — raids are now FOUGHT by the folk, and pathing decides
+  the clash. game.js stepRaids splits: offline stays one abstract loss
+  (applyRaidLoss, extracted); a LIVE raid sets S.game.raidWave, and town.js
+  spawns real raider entities (new js/town/raids.js). Raiders findPath to the
+  core — routed around walls and THROUGH the gates — so a gated wall funnels
+  them to a chokepoint. Soldiers (villagers.js pickTarget → nearest raider)
+  intercept and cut them down (hp); any raider that breaks through loots a share
+  (applyRaidLoss) and flees; unbroken raiders retreat after 45s. So walls +
+  muster + pathing set the damage, not a die roll. logRaid retired (raids.js
+  chronicles live; catchUp still summarizes offline). Verifier + harnesses clean.
+  EYEBALL: the raider sprites, the clash at the gates, retreat.
 - 2026-07-13: **F10 done** (delegated to a Sonnet subagent, reviewed by me). The
   Will story-popout now surfaces the FULL authoritative log (S.game.log, every
   kind) with a row of filter chips — All / Raids / Spoilage / Discoveries /

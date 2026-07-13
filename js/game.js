@@ -918,32 +918,29 @@ class Game {
     if (Math.random() > this.h.danger * 0.6) return; // a quiet season
     const mit = Math.max(0.2, 1 - this.defense() * 0.2);
     const bite = this.h.danger * mit;
+    this.raidTally = (this.raidTally || 0) + 1;
+    this.moraleShock = Math.min(0.6, (this.moraleShock || 0) + (bite > 0.55 ? 0.15 : 0.06)); // a raid shakes the folk
+    if (offline) { this.applyRaidLoss(bite); return; } // no town to storm offline — one abstract loss (catchUp collates)
+    // Live: send a WAVE at the town (raids.js). What they carry off depends on
+    // how many the muster cuts down before they reach the stores — so walls,
+    // soldiers, and pathing decide the damage, not a die roll here.
+    this.raidWave = { n: Math.max(1, Math.round(this.h.danger * 6)), bite, mit };
+  }
+
+  // applyRaidLoss draws a raid's bite from the stores (one or two kinds) and, on
+  // a hard bite, some of the folk — returning what was carried off. Used at full
+  // strength offline, and by the live wave per reaching-raider (raids.js).
+  applyRaidLoss(bite) {
     const taken = {};
-    // A raid falls on one or two kinds of stores, not everything at once —
-    // for food it's the biggest granary (raiders take the fattest pile).
     const foodTarget = FOOD_CATS.reduce((a, c) => (this.res[c] || 0) > (this.res[a] || 0) ? c : a, FOOD_CATS[0]);
     for (const k of [foodTarget, 'salt', 'ore', 'coin']) {
       if (Math.random() > 0.5) continue;
-      const loss = Math.floor(this.res[k] * bite * (0.1 + Math.random() * 0.14));
+      const loss = Math.floor((this.res[k] || 0) * bite * (0.1 + Math.random() * 0.14));
       if (loss > 0) { this.res[k] -= loss; taken[k] = loss; }
     }
     let deaths = 0;
     if (bite > 0.55 && this.pop > 5 && Math.random() < 0.5) { deaths = Math.ceil(this.pop * bite * 0.06); this.pop -= deaths; }
-    this.raidTally = (this.raidTally || 0) + 1;
-    this.moraleShock = Math.min(0.6, (this.moraleShock || 0) + (deaths > 0 ? 0.15 : 0.06)); // a raid shakes the folk
-    // Offline raids are folded into one summary line by catchUp, so we
-    // don't flood the chronicle with a season's worth of skirmishes.
-    if (!offline) this.logRaid(taken, deaths, mit);
-  }
-
-  logRaid(taken, deaths, mit) {
-    const parts = Object.entries(taken).map(([k, v]) => `${v} ${k}`);
-    let msg = 'Raiders came down from the wilds';
-    if (parts.length) msg += `, carrying off ${parts.join(', ')}`;
-    if (deaths) msg += `; ${deaths} of the folk fell`;
-    if (!parts.length && !deaths) msg = 'Raiders tested the watch and were driven off';
-    if (mit < 0.5) msg += '. The wall held much back.';
-    this.pushLog(msg, 'raid');
+    return { taken, deaths };
   }
 
   pushLog(text, kind = 'note') {
