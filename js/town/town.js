@@ -230,7 +230,12 @@ function hoverIdentify(e) {
   if (!tip) return;
   if (!h) { tip.style.display = 'none'; return; }
   let text = h.label || BUILD_NAME[h.type] || h.type;
-  if (h.type) { const lv = S.game.level(h.type); if (lv) text += ' · lvl ' + lv; }
+  if (h.type) {
+    const hash = h.key ? h.key.indexOf('#') : -1;
+    const idx = hash >= 0 ? Number(h.key.slice(hash + 1)) : null;   // this building's own level, not the hold's total
+    const lv = idx != null ? S.game.instanceLevel(h.type, idx) : S.game.level(h.type);
+    if (lv) text += ' · lvl ' + lv;
+  }
   if (h.type && BY_ID[h.type] && BY_ID[h.type].kind === 'storage') { const fill = storageFill(h.type); if (fill) text += ' · ' + fill; }
   const dist = districtOf(h); if (dist) text += ' · ' + DISTRICT_NAME[dist];
   tip.textContent = text;

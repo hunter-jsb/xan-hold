@@ -25,7 +25,7 @@ own commit so anything can be rolled back.
 | # | feature | touches | status |
 |---|---------|---------|--------|
 | F1 | district-border highlight on hover | town.js | ✅ |
-| F2 | per-instance building levels + upgrade action | game.js, buildings.js, town.js, hud.js | ☐ |
+| F2 | per-instance building levels + upgrade action | game.js, buildings.js, town.js, hud.js | ✅ |
 | F3 | keep as an upgradeable building (physical + functional) | game.js, buildings.js, town.js | ☐ |
 | F4 | seasons + clearer day/night | game.js, terrain.js, town.js, hud.js | ☐ |
 | F5 | starvation, disease, unhappiness | game.js, hud.js | ☐ |
@@ -46,6 +46,16 @@ the REAL local rock/rockAge (geology), salt/salinity (deposits), drainage/river,
 elevation, nearby named features, and realm history. Nothing is invented.
 
 ## Log
+- 2026-07-13: **F2 done** — buildings now have PER-INSTANCE levels. `game.js`
+  `lvl` (pooled count+output) → `instances[id]=[lvlA,…]`; `level(id)`=sum (all
+  downstream unchanged), `count(id)`=sprites, new `upgrade`/`upgradeAny`/
+  `canUpgrade`/`canDeepen`/`instanceLevel`. `build` appends a level-1 instance;
+  the steward deepens-before-sprawl via generalized `EXPAND` orders. Old saves
+  migrate (pooled level split across the sprite count it used to draw). Tooltip
+  shows the building's OWN level; a small gold pip-stack marks upgraded
+  buildings. Proven headless: scratchpad/harness-f2.mjs (34 assertions).
+  Research subagent's F6 design doc landed at scratchpad/research-design.md.
+
 - 2026-07-12: baseline checkpointed (the full town.js modularization + walls
   rework 2 + 5-food-category system + spoilage, all previously uncommitted).
   Verifier rebuilt at scratchpad/verify.mjs, clean.

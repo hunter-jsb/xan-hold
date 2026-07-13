@@ -1,7 +1,7 @@
 // buildings.js — placement + reconciliation: recipes/containers, the core &
 // outer districts + siting geometry, plot allocation, reconcileBuildings, and
 // the farmland district's autotiled render.
-import { Sprite, Container, AnimatedSprite } from 'pixi.js';
+import { Sprite, Container, AnimatedSprite, Graphics } from 'pixi.js';
 import { TILE } from './atlas.js';
 import { S } from './state.js';
 import { PLOT, PLOTS_X, PLOTS_Y, CENTER_TX, CENTER_TY, CENTER_PX, CENTER_PY, MAX_PER_TYPE, SITE_ALPHA } from './constants.js';
@@ -295,13 +295,12 @@ export function nextMineNode() {
   return node;
 }
 
-// mineNodeAvailable — true if a `build mine` order could actually be placed
-// right now: either the ore field still has an unclaimed vein, or the town
-// is already past the drawn-instance cap (MAX_PER_TYPE), in which case a
-// further level just deepens existing mines rather than raising a new one.
+// mineNodeAvailable — true if a `build mine` order is satisfiable: an
+// unclaimed ore vein for a NEW mine, else an existing shaft that can be
+// deepened (a per-instance upgrade). False = no vein and nothing to deepen.
 export function mineNodeAvailable() {
-  if (S.game.level('mine') >= MAX_PER_TYPE) return true;
-  return S.oreNodes.some((n) => !n.claimedByMine);
+  if (S.oreNodes.some((n) => !n.claimedByMine)) return true;
+  return S.game.canDeepen('mine');
 }
 
 export function placeTownhall() {
@@ -322,27 +321,15 @@ export function placeTownhall() {
   S.hittable.push({ x0: c.x / TILE, y0: c.y / TILE, x1: c.x / TILE + recipe.w, y1: c.y / TILE + recipe.h, label: S.hold.name + ' — the keep' });
 }
 
-// desiredCountFor mirrors desiredCounts()'s per-type formula for a SPECIFIC
-// level (not just the hold's current one) — startSite reads this to check
-// whether the level a build order is about to raise actually warrants a NEW
-// instance, or just deepens one already standing (see startSite).
-export function desiredCountFor(type, lv) {
-  if (lv <= 0) return 0;
-  // A mine hut is pinned 1:1 to a real ore node (see nextMineNode) — its
-  // count can't be a coarser proxy for level like the other producers.
-  if (type === 'mine') return Math.min(MAX_PER_TYPE, lv);
-  const b = BY_ID[type];
-  return Math.min(MAX_PER_TYPE, Math.max(1, Math.round(lv / (b && b.kind === 'prod' ? 1.5 : 1))));
-}
-
-// Desired count of each building type from the economy's levels.
+// Desired count of each building type = its physical-building count now that
+// levels are per-instance (build() raises a new one, upgrade() deepens one, so
+// count no longer needs to be inferred from a pooled level).
 export function desiredCounts() {
   const d = {};
   for (const b of BUILDINGS) {
     if (b.id === 'palisade' || b.id === 'farm') continue; // palisade = wall; farm = drawn from farmPlots
-    const lv = S.game.level(b.id);
-    if (lv <= 0) continue;
-    d[b.id] = desiredCountFor(b.id, lv);
+    const n = S.game.count(b.id);
+    if (n > 0) d[b.id] = n;
   }
   return d;
 }
@@ -425,12 +412,39 @@ export function reconcileBuildings() {
         riseIn(c);
       }
       S.placed.set(key, { container: c, plot });
-      S.hittable.push({ x0: c.x / TILE, y0: c.y / TILE, x1: c.x / TILE + recipe.w, y1: c.y / TILE + recipe.h, type });
+      S.hittable.push({ key, x0: c.x / TILE, y0: c.y / TILE, x1: c.x / TILE + recipe.w, y1: c.y / TILE + recipe.h, type });
       if (S.booted) constructionPoof(c.x + recipe.w * TILE / 2, c.y + recipe.h * TILE);
     }
   }
+  updateLevelBadges();
   reconcileFarms();
   renderWalls();
+}
+
+// updateLevelBadges keeps a small gold pip-stack above each building whose
+// instance level has risen — the visible tell for the per-building upgrade
+// system (an upgrade deepens a building without adding a sprite). Farms show
+// their level as field AREA, so they're skipped.
+function updateLevelBadges() {
+  for (const [key, rec] of S.placed) {
+    if (key.startsWith('farm#') || !rec.container) continue;
+    const hash = key.indexOf('#');
+    const type = key.slice(0, hash), idx = Number(key.slice(hash + 1));
+    const lv = S.game.instanceLevel(type, idx);
+    if (rec.badgeLvl === lv) continue;
+    rec.badgeLvl = lv;
+    drawLevelBadge(rec, lv);
+  }
+}
+
+// drawLevelBadge draws lv-1 tiny gold pips near a building's top (level 1 = none).
+function drawLevelBadge(rec, lv) {
+  if (rec.badge) { rec.container.removeChild(rec.badge); rec.badge.destroy({ children: true }); rec.badge = null; }
+  if (lv <= 1) return;
+  const g = new Container();
+  for (let i = 0; i < lv - 1; i++) g.addChild(new Graphics().rect(i * 3, 0, 2, 3).fill(0xffd23a).stroke({ width: 0.4, color: 0x5a3d0e }));
+  g.x = 1; g.y = -5;              // just above the footprint's top-left corner
+  rec.container.addChild(g); rec.badge = g;
 }
 
 // Farms are individual fields (game.farmPlots), each with a size and crop.
@@ -594,30 +608,20 @@ export function makeScaffold(recipe, cx, cy) {
   return g;
 }
 
-// startSite performs REAL construction for a non-farm `build` order whose
-// cost is already confirmed affordable (see advanceBuildOrder): find where
-// it belongs (allocatePlot), pay + raise the level (S.game.build — the same
-// call as before, bookkeeping unchanged), and raise a low-alpha site over a
-// scaffold for builders to work.
-//
-// Not every build order needs a NEW instance, though: desiredCounts() only
-// adds one roughly every 1.5 levels for a producer (a flat per-vein cap for
-// a mine) — an "in-between" order just deepens a building already standing,
-// exactly as it did before sites existed, with no new plot and no site.
-// Returns a site record, the string 'instant' for a pure deepen, or null if
-// there's nowhere to put a NEW instance right now (the district's full) —
-// the caller just waits and retries; no plot/vein/shore is ever touched
-// until we're sure this order will actually use it.
+// startSite performs REAL construction for a non-farm `build` order (cost
+// already confirmed affordable): allocate a plot, pay + append a new level-1
+// instance (S.game.build), and raise a low-alpha site over a scaffold for
+// builders to work. Returns a site record; or 'instant' when there's no room
+// for a new sprite (the drawn-instance cap, or a mine whose veins/plots are
+// full) and it deepens an existing building's LEVEL instead; or null when
+// there's nothing to build OR deepen right now (the caller waits + retries).
 export function startSite(type) {
   if (type === 'farm') return startFarmSite(); // a field, not a recipe/plot building — its own site path
-  const lv = S.game.level(type);
-  if (desiredCountFor(type, lv + 1) <= placedCountOf(type)) {
-    return S.game.build(type) ? 'instant' : null;
-  }
+  if (S.game.count(type) >= MAX_PER_TYPE) return S.game.upgradeAny(type) ? 'instant' : null;
   const { recipe, prop } = recipeFor(type);
   const alloc = allocatePlot(type, recipe);
-  if (!alloc) return null;
-  S.game.build(type);
+  if (!alloc) return S.game.count(type) > 0 && S.game.upgradeAny(type) ? 'instant' : null; // no room/vein — deepen instead
+  S.game.build(type);                          // pays + appends a new level-1 instance
   const { plot, cx, cy } = alloc;
   const key = `${type}#${placedCountOf(type)}`; // keys are contiguous from 0 — this IS the next free slot
   const c = makeBuildingContainer(recipe, prop);
@@ -680,7 +684,7 @@ export function finalizeSite(site) {
   }
   const c = site.container, r = site.recipe;
   c.alpha = 1;
-  S.hittable.push({ x0: c.x / TILE, y0: c.y / TILE, x1: c.x / TILE + r.w, y1: c.y / TILE + r.h, type: site.type });
+  S.hittable.push({ key: site.key, x0: c.x / TILE, y0: c.y / TILE, x1: c.x / TILE + r.w, y1: c.y / TILE + r.h, type: site.type });
   S.siteKeys.delete(site.key);
   const i = S.sites.indexOf(site);
   if (i >= 0) S.sites.splice(i, 1);

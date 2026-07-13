@@ -73,10 +73,13 @@ export function advanceBuildOrder(a, dt) {
     // does at MAX_PER_TYPE). Without this, a saturated core froze the whole
     // town, since localSteward won't act while any order is still pending.
     a.siteWait = (a.siteWait || 0) + dt;
-    if (a.siteWait >= 18 && S.game.build(a.target)) {
-      a.siteWait = 0; a.qtyLeft -= 1;
-      if (a.qtyLeft <= 0) { a.status = 'done'; a.doneAt = Date.now(); a.progress = 1; }
-      else a.progress = 0;
+    if (a.siteWait >= 18) {
+      a.siteWait = 0;
+      if (S.game.upgradeAny(a.target)) {   // no room for a new sprite — deepen an existing one so the order lands
+        a.qtyLeft -= 1;
+        if (a.qtyLeft <= 0) { a.status = 'done'; a.doneAt = Date.now(); a.progress = 1; }
+        else a.progress = 0;
+      } else { a.status = 'skipped'; a.doneAt = Date.now(); } // nowhere to build and nothing to deepen — drop it
     }
     return;
   }
@@ -117,9 +120,13 @@ export function advanceOrder(a, dt) {
       return;                    // (other crews keep working in parallel)
     }
   } else if (a.type === ORDER.EXPAND) {
-    if (S.game.expandFarm() >= 0) { a.qtyLeft -= 1; a.waited = 0; }
+    // Deepen a building's level: a field grows by SIZE (expandFarm), any other
+    // building by a per-instance upgrade (upgradeAny).
+    const tgt = a.target || 'farm';
+    const ok = tgt === 'farm' ? (S.game.expandFarm() >= 0) : S.game.upgradeAny(tgt);
+    if (ok) { a.qtyLeft -= 1; a.waited = 0; }
     else {
-      autoFund('farm'); a.progress = 1; a.waited += dt;
+      autoFund(tgt); a.progress = 1; a.waited += dt;
       if (a.waited > 16) { a.status = 'skipped'; a.doneAt = Date.now(); }
       return;
     }
@@ -270,6 +277,16 @@ export function localSteward() {
   if (g.pop > 10 && S.wallEdgesBuilt.size >= 2 && (S.fortEdges ? S.fortEdges.size : 0) < 4
       && (g.res.stone > 24 || g.res.timber > 34) && Math.random() < 0.15) {
     if (planFortSpan()) return;
+  }
+  // Deepen before sprawl: sometimes raise a standing building's level (the
+  // per-building upgrade) instead of adding another sprite — richer output from
+  // the same footprint. Farms deepen via the EXPAND path above.
+  if (g.pop > 8 && Math.random() < 0.22) {
+    const byRes = { timber: ['sawmill'], stone: ['quarry'], ore: ['mine'], salt: ['saltern'], coin: ['market'] };
+    const order = [];
+    for (const [res] of Object.entries(h.rich).sort((a, b) => b[1] - a[1])) for (const id of (byRes[res] || [])) order.push(id);
+    order.push('wharf', 'longhouse', 'granary');
+    for (const id of order) if (g.count(id) > 0 && g.canUpgradeAny(id)) { pushOrder({ type: ORDER.EXPAND, target: id, qty: 1 }); return; }
   }
   const want = [];
   // A speaker's focus can bid a specific building outright — the placement

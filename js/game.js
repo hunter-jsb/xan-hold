@@ -180,9 +180,11 @@ class Game {
       const topKey = top === 'food' ? 'grain' : top;
       this.res[topKey] = (this.res[topKey] || 0) + 20;
       this.pop = 8;
-      this.lvl = {}; // no starting farm — the town breaks ground on its first one (see localSteward)
-      if (hold.tierName === 'saltern') this.lvl.saltern = 1;
-      if (this.water > 0.12) this.lvl.wharf = 1;
+      // Per-building levels: instances[id] = [lvlA, lvlB…], one level per
+      // physical building. No starting farm — localSteward breaks first ground.
+      this.instances = {};
+      if (hold.tierName === 'saltern') this.instances.saltern = [1];
+      if (this.water > 0.12) this.instances.wharf = [1];
       this.founded = Date.now();
       this.log = [];
       this.raidClock = CFG.raidIntervalS;
@@ -197,9 +199,7 @@ class Game {
     // Farm fields: each is an individual plot with a size (grown by expansion)
     // and a crop. Seeded from the farm level so old saves migrate cleanly.
     this.farmPlots = this.farmPlots || [];
-    if (this.farmPlots.length === 0 && this.level('farm') > 0) {
-      for (let i = 0; i < this.level('farm'); i++) this.farmPlots.push({ size: 1, crop: this.pickCrop() });
-    }
+    this.migrateInstances(); // old pooled lvl → per-building instances (+ seed fields from an old lvl.farm)
     this.migrateFood(); // split a pre-crop save's pooled food + retag old plot crops
     // Spoilage read-outs (transient, for the HUD) — recomputed each tick by
     // stepSpoilage. spoilTally counts notable turns (town.js mirrors it to the
@@ -248,6 +248,34 @@ class Game {
     }
   }
 
+  // migrateInstances upgrades a pre-per-instance save: the old pooled `lvl`
+  // (one number per type = count AND output) becomes `instances` (a level per
+  // physical building). The pooled level is split across the SAME number of
+  // sprites the old model drew, so both total output and building count carry
+  // over. An old lvl.farm seeds that many fields (farms live in farmPlots —
+  // a field's size IS its level).
+  migrateInstances() {
+    if (this.instances && !this.lvl) return;       // already new-model (fresh game or new save)
+    const old = this.lvl || {};
+    this.instances = this.instances || {};
+    const CAP = 8;                                  // MAX_PER_TYPE (town.js) — the drawn-instance ceiling
+    const oldCount = (id, lv) => {
+      if (id === 'mine') return Math.min(CAP, lv);  // 1:1 with ore veins
+      const b = BY_ID[id], div = b && b.kind === 'prod' ? 1.5 : 1;
+      return Math.min(CAP, Math.max(1, Math.round(lv / div)));
+    };
+    for (const [id, lv] of Object.entries(old)) {
+      if (id === 'farm' || lv <= 0 || this.instances[id]) continue;
+      const cnt = oldCount(id, lv), arr = [];
+      for (let k = 0; k < cnt; k++) arr.push(Math.floor(lv / cnt) + (k < lv % cnt ? 1 : 0));
+      this.instances[id] = arr.filter((x) => x > 0);
+    }
+    if ((old.farm || 0) > 0 && this.farmPlots.length === 0) {
+      for (let i = 0; i < old.farm; i++) this.farmPlots.push({ size: 1, crop: this.pickCrop() });
+    }
+    delete this.lvl;
+  }
+
   // newFarm builds a fresh field (its own plot), optionally of a chosen crop —
   // the alternative to expanding an existing one. Default crop is climate-picked.
   newFarm(crop) {
@@ -281,11 +309,29 @@ class Game {
     return BUILDINGS.filter((b) => {
       if (b.kind !== 'prod') return true;
       // Offered if the land supports it, or you already have one.
-      return this.richOf(b) >= b.gate || this.lvl[b.id];
+      return this.richOf(b) >= b.gate || this.count(b.id) > 0;
     });
   }
 
-  level(id) { return this.lvl[id] || 0; }
+  // level(id) is the hold's TOTAL level in a building type — the sum of its
+  // per-building instance levels (farms: the field count). Everything
+  // downstream (rates, caps, defense, popCap, jobs) reads this total, so the
+  // per-instance split is invisible to them. count(id) = physical buildings;
+  // instanceLevel(id, idx) = one building's level (a field's size).
+  level(id) {
+    if (id === 'farm') return (this.farmPlots || []).length;
+    const a = this.instances[id]; let s = 0;
+    if (a) for (const l of a) s += l;
+    return s;
+  }
+  count(id) {
+    if (id === 'farm') return (this.farmPlots || []).length;
+    return (this.instances[id] || []).length;
+  }
+  instanceLevel(id, idx) {
+    if (id === 'farm') { const p = (this.farmPlots || [])[idx]; return p ? p.size : 0; }
+    return (this.instances[id] || [])[idx] || 0;
+  }
 
   costOf(id) {
     const b = BY_ID[id];
@@ -300,12 +346,60 @@ class Game {
     return Object.entries(c).every(([k, v]) => this.res[k] >= v);
   }
 
+  // build(id) raises a WHOLE new building (a level-1 instance). Farms are the
+  // exception: the caller (newFarm/startFarmSite) pushes the field into
+  // farmPlots — build just pays and confirms.
   build(id) {
     if (!this.canAfford(id)) return false;
     const c = this.costOf(id);
     for (const [k, v] of Object.entries(c)) this.res[k] -= v;
-    this.lvl[id] = this.level(id) + 1;
+    if (id === 'farm') return true;
+    (this.instances[id] || (this.instances[id] = [])).push(1);
     return true;
+  }
+
+  // ---- per-building upgrades -----------------------------------------
+  // Each physical building has its own level; upgrading DEEPENS one instance
+  // (more output/capacity from the same footprint), as distinct from build()
+  // raising a new one. Farms upgrade by field SIZE (expandFarm) — the same
+  // idea that predates this system.
+  instanceMax(id) { return id === 'farm' ? 3 : 6; }
+  upgradeCost(id, idx) {
+    const b = BY_ID[id], L = this.instanceLevel(id, idx), out = {};
+    for (const [k, v] of Object.entries(b.cost)) out[k] = Math.ceil(v * 0.8 * Math.pow(CFG.costScale, L));
+    return out;
+  }
+  canUpgrade(id, idx) {
+    if (this.instanceLevel(id, idx) >= this.instanceMax(id)) return false;
+    return Object.entries(this.upgradeCost(id, idx)).every(([k, v]) => (this.res[k] || 0) >= v);
+  }
+  canUpgradeAny(id) {
+    const arr = this.instances[id] || [];
+    for (let i = 0; i < arr.length; i++) if (this.canUpgrade(id, i)) return true;
+    return false;
+  }
+  // canDeepen — is any instance STRUCTURALLY upgradable (below its max),
+  // ignoring cost? The order gates use this to decide "satisfiable at all"
+  // (money is handled by autoFund downstream), not "affordable this instant".
+  canDeepen(id) {
+    const max = this.instanceMax(id);
+    return (this.instances[id] || []).some((l) => l < max);
+  }
+  upgrade(id, idx) {
+    if (id === 'farm') return this.expandFarm() >= 0; // fields deepen by size (idx ignored — smallest grows)
+    if (!this.canUpgrade(id, idx)) return false;
+    for (const [k, v] of Object.entries(this.upgradeCost(id, idx))) this.res[k] -= v;
+    this.instances[id][idx] += 1;
+    return true;
+  }
+  // upgradeAny deepens the lowest still-growable instance — the steward's
+  // "raise a level here" when build() would only sprawl another sprite.
+  upgradeAny(id) {
+    if (id === 'farm') return this.expandFarm() >= 0;
+    const arr = this.instances[id] || [];
+    let idx = -1, lo = Infinity;
+    for (let i = 0; i < arr.length; i++) if (arr[i] < this.instanceMax(id) && this.canUpgrade(id, i) && arr[i] < lo) { lo = arr[i]; idx = i; }
+    return idx >= 0 ? this.upgrade(id, idx) : false;
   }
 
   // ---- derived rates -------------------------------------------------
@@ -618,7 +712,7 @@ class Game {
 
   // ---- persistence ---------------------------------------------------
   serialize() {
-    return { res: this.res, pop: this.pop, lvl: this.lvl, farmPlots: this.farmPlots, faith: this.faith, founded: this.founded, log: this.log, raidClock: this.raidClock, lastTick: this.lastTick };
+    return { res: this.res, pop: this.pop, instances: this.instances, farmPlots: this.farmPlots, faith: this.faith, founded: this.founded, log: this.log, raidClock: this.raidClock, lastTick: this.lastTick };
   }
   save() { STORE.set('xanhold:' + this.h.id, JSON.stringify(this.serialize())); }
   static load(hold) {

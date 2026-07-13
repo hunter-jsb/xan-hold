@@ -3,7 +3,7 @@
 import { Sprite, Graphics } from 'pixi.js';
 import { TILE } from './atlas.js';
 import { S } from './state.js';
-import { PLOT, PLOTS_X, PLOTS_Y, TOWN_W, TOWN_H, CENTER_TX, CENTER_TY, CENTER_PX, CENTER_PY, MAX_PER_TYPE } from './constants.js';
+import { PLOT, PLOTS_X, PLOTS_Y, TOWN_W, TOWN_H, CENTER_TX, CENTER_TY, CENTER_PX, CENTER_PY } from './constants.js';
 import { rng, DIRS4 } from './coords.js';
 
 export function buildPlots() {
@@ -406,12 +406,12 @@ export function nextWharfSite() {
   return site;
 }
 
-// wharfSiteAvailable — true if a `build wharf` order could actually be sited
-// right now: either the shoreline still has an unclaimed tile, or the town
-// is already past the drawn-instance cap (mirrors mineNodeAvailable).
+// wharfSiteAvailable — true if a `build wharf` order is satisfiable: an
+// unclaimed shore tile for a NEW wharf, else an existing wharf that can be
+// deepened (mirrors mineNodeAvailable).
 export function wharfSiteAvailable() {
-  if (S.game.level('wharf') >= MAX_PER_TYPE) return true;
-  return S.shoreSites.some((s) => !s.claimed);
+  if (S.shoreSites.some((s) => !s.claimed)) return true;
+  return S.game.canDeepen('wharf');
 }
 
 // constructionPoof — a little burst of dust when a building is finished.
