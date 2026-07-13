@@ -115,6 +115,7 @@ async function boot() {
   setInterval(townTick, 1000);
   setInterval(localSteward, LOCAL_MS);
   setInterval(() => callWill('the turning of the season'), STEWARD_MS);
+  setInterval(stepMood, 3000);  // villagers voice the hold's mood/health now and then
   setInterval(dumpState, 2500); // debug: keep debug-dump.json fresh for GPU-less inspection (temporary)
   // No decree on boot — the town runs on its local heuristic and only spends
   // a Claude call every STEWARD_MS or when you press P, so reloads are free.
@@ -217,6 +218,38 @@ function stepWeather(dt) {
     if (p.y > H + 4) { p.y = -4; p.x = Math.random() * W; }
     if (p.x < -4) p.x = W + 4; else if (p.x > W + 4) p.x = -4;
   }
+}
+
+// ---- villager mood emotes -------------------------------------------
+// A little colour-coded bubble floats up from a villager's head to voice the
+// hold's state — yellow content, blue glum, orange hungry, green sick — so
+// morale/hunger/sickness (F5) read on screen, not just in the HUD.
+function villagerEmote(v, color) {
+  const g = new Graphics().circle(0, 0, 3.4).fill(color).stroke({ width: 0.8, color: 0x14140f, alpha: 0.6 });
+  const dot = new Graphics().circle(-1, -1, 1).fill({ color: 0xffffff, alpha: 0.7 }); // a highlight so it reads as a bubble
+  g.addChild(dot);
+  g.x = v.x; g.y = v.y - 30; g.zIndex = 1e7;
+  S.entities.addChild(g);
+  const t0 = performance.now();
+  const tick = () => {
+    const k = (performance.now() - t0) / 1100;
+    if (k >= 1 || !v.parent) { S.entities.removeChild(g); g.destroy(); return; }
+    g.x = v.x; g.y = v.y - 30 - k * 10; g.alpha = 1 - k * k;
+    requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+}
+// stepMood — now and then, a couple of folk express the hold's mood/health.
+function stepMood() {
+  const g = S.game; let color = null;
+  if (g.starving) color = 0xd94f3f;                                       // hungry — red (reads against the ground)
+  else if ((g.plagueTally || 0) > (S.lastMoodPlague || 0)) color = 0x6fbf4a; // a fresh sickness — green
+  else if ((g.happiness ?? 0.6) < 0.35) color = 0x6f86e0;                 // glum — blue
+  else if ((g.happiness ?? 0.6) > 0.8 && Math.random() < 0.6) color = 0xf2d24e; // content — yellow
+  S.lastMoodPlague = g.plagueTally || 0;
+  if (!color || !S.villagers.length) return;
+  const pool = S.villagers.slice().sort(() => Math.random() - 0.5).slice(0, 2 + (Math.random() * 2 | 0));
+  for (const v of pool) villagerEmote(v, color);
 }
 
 function onFrame(ticker) {
