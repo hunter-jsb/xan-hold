@@ -239,6 +239,29 @@ function villagerEmote(v, color) {
   };
   requestAnimationFrame(tick);
 }
+// discoveryBurst — a eureka of gold + insight-blue sparks rises from the
+// Scholars' Hall (or the keep) when a new discovery lands, so research reads as
+// a MOMENT on screen, not only a chronicle line.
+function discoveryBurst() {
+  const hall = [...S.placed.entries()].find(([k]) => k.startsWith('scholarshall#'));
+  const c = hall && hall[1] && hall[1].container;
+  const px = c ? c.x + TILE : CENTER_TX * TILE, py = c ? c.y : CENTER_TY * TILE;
+  for (let i = 0; i < 16; i++) {
+    const col = i % 2 ? 0xf2d24e : 0x8fd0ff;
+    const g = new Graphics().circle(0, 0, 1.4 + Math.random()).fill(col);
+    g.x = px + (Math.random() - 0.5) * 20; g.y = py - Math.random() * 8; g.zIndex = 1e7;
+    S.entities.addChild(g);
+    const vx = (Math.random() - 0.5) * 28, vy = -22 - Math.random() * 22, t0 = performance.now();
+    const tick = () => {
+      const k = (performance.now() - t0) / 1050;
+      if (k >= 1) { S.entities.removeChild(g); g.destroy(); return; }
+      g.x += vx * 0.016; g.y += vy * 0.016; g.alpha = 1 - k;
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }
+}
+
 // stepMood — now and then, a couple of folk express the hold's mood/health.
 function stepMood() {
   const g = S.game; let color = null;
@@ -539,6 +562,7 @@ function townTick() {
     const last = S.game.log.find((l) => l.kind === 'discovery');
     if (last) pushChronicle('📖 ' + last.text, 'discovery');
     if (S.ui.archivePopout && S.ui.archivePopout.isOpen()) S.ui.archivePopout.setContent(renderArchiveDetail());
+    discoveryBurst();   // a visible eureka at the Scholars' Hall
   }
   S.lastDiscoveryTally = disc;
   // a sickness (or a hunger line) since last look → chronicle it (both log as 'plague')
