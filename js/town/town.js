@@ -66,6 +66,7 @@ async function boot() {
   loadWalls();                                        // restore this hold's grown wall/gate tiles (see saveWalls)
   S.game = Game.load(S.hold);
   const away = S.game.catchUp();
+  window.__S = S; // debug: live-state inspection while diagnosing the steward/economy (temporary)
 
   mark('init pixi');
   S.app = new Application();

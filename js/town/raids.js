@@ -32,7 +32,8 @@ export function nearestRaider(px, py) {
 export function spawnRaidWave(n, bite) {
   if (!S.raiders) S.raiders = [];
   S.raidBite = bite || 0.3;
-  for (let i = 0; i < n; i++) S.raiders.push(makeRaider());
+  S.raidStats = { killed: 0, breached: 0, taken: {} }; // tallied over the wave, chronicled ONCE at the end
+  for (const _ of Array(n)) S.raiders.push(makeRaider());
   S.alarm = 1.5;
   pushChronicle(`⚔ A raiding band descends on ${S.hold.name}!`, 'raid');
 }
@@ -84,26 +85,32 @@ export function stepRaid(dt) {
   if (!S.raiders || !S.raiders.length) return;
   const soldiers = S.villagers.filter((v) => v.role === ROLE.SOLDIER);
   const core = CORE_PX();
-  let killed = 0;
+  const st = S.raidStats || (S.raidStats = { killed: 0, breached: 0, taken: {} });
   for (const r of S.raiders) {
     if (r.dead) continue;
     if (Date.now() - r.spawnedAt > 45000) { killRaider(r); continue; }  // couldn't break in — retreat
     const fighting = soldiers.some((s) => Math.hypot(s.x - r.x, s.y - r.y) < ENGAGE);
     if (fighting) {
       r.hp -= 1.6 * dt;
-      if (r.hp <= 0) { killRaider(r); killed++; }
+      if (r.hp <= 0) { killRaider(r); st.killed++; }
       continue;                                                          // halted while it fights
     }
     moveRaider(r, dt);
-    if (Math.hypot(r.x - core.x, r.y - core.y) < 3.5 * TILE) {           // reached the stores
+    if (Math.hypot(r.x - core.x, r.y - core.y) < 3.5 * TILE) {           // reached the stores — loot + flee
       const { taken } = S.game.applyRaidLoss((S.raidBite || 0.3) * 0.5);
-      const parts = Object.entries(taken).map(([k, v]) => `${v} ${k}`);
-      pushChronicle(parts.length ? `Raiders broke through — carried off ${parts.join(', ')}.` : 'Raiders broke through the stores.', 'raid');
+      st.breached++;
+      for (const [k, v] of Object.entries(taken)) st.taken[k] = (st.taken[k] || 0) + v;
       killRaider(r);
     }
   }
-  if (killed) pushChronicle(killed === 1 ? 'A raider is cut down.' : `${killed} raiders are cut down.`, 'raid');
   S.raiders = S.raiders.filter((r) => !r.dead);
-  if (!S.raiders.length && S.raidWasActive) { pushChronicle('The wilds are driven back from the walls.', 'note'); }
+  // The whole clash is chronicled as ONE line when the wave ends — not a line
+  // per kill/breach every frame (that flooded the panel).
+  if (!S.raiders.length && S.raidWasActive) {
+    const parts = Object.entries(st.taken).map(([k, v]) => `${v} ${k}`);
+    let msg = st.breached ? `The raid broke through — carried off ${parts.join(', ') || 'little'}` : 'The raid was thrown back from the walls';
+    if (st.killed) msg += `; ${st.killed} raider${st.killed === 1 ? '' : 's'} cut down`;
+    pushChronicle(msg + '.', st.breached ? 'raid' : 'note');
+  }
   S.raidWasActive = S.raiders.length > 0;
 }
