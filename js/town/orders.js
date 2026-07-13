@@ -288,6 +288,11 @@ export function localSteward() {
     order.push('wharf', 'longhouse', 'granary');
     for (const id of order) if (g.count(id) > 0 && g.canUpgradeAny(id)) { pushOrder({ type: ORDER.EXPAND, target: id, qty: 1 }); return; }
   }
+  // Expand the keep as the hold prospers — a grander stronghold quarters more
+  // folk and stiffens its defense + muster (a per-instance upgrade of the keep).
+  if (g.pop > 12 && g.canUpgradeAny('keep') && Math.random() < 0.12) {
+    pushOrder({ type: ORDER.EXPAND, target: 'keep', qty: 1 }); return;
+  }
   const want = [];
   // A speaker's focus can bid a specific building outright — the placement
   // layer (nextCorePlot/nextOuterPlot/nextFarmPlot) still decides WHICH

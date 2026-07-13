@@ -26,7 +26,7 @@ own commit so anything can be rolled back.
 |---|---------|---------|--------|
 | F1 | district-border highlight on hover | town.js | ✅ |
 | F2 | per-instance building levels + upgrade action | game.js, buildings.js, town.js, hud.js | ✅ |
-| F3 | keep as an upgradeable building (physical + functional) | game.js, buildings.js, town.js | ☐ |
+| F3 | keep as an upgradeable building (physical + functional) | game.js, buildings.js, town.js | ✅ |
 | F4 | seasons + clearer day/night | game.js, terrain.js, town.js, hud.js | ☐ |
 | F5 | starvation, disease, unhappiness | game.js, hud.js | ☐ |
 | F6 | research — discover geology/salt/lore from world.js | new research.js, game.js, world.js, hud.js, serve.mjs | ☐ |
@@ -46,6 +46,15 @@ the REAL local rock/rockAge (geology), salt/salinity (deposits), drainage/river,
 elevation, nearby named features, and realm history. Nothing is invented.
 
 ## Log
+- 2026-07-13: **F3 done** — the keep is now a real upgradeable building (`keep`
+  in BUILDINGS, kind civic, instances.keep=[L], max level 4, always present).
+  PHYSICAL: `keepRecipe(level)` grows it taller each level (extra wall courses);
+  level 1 is byte-identical to the old keep. FUNCTIONAL (all above level 1, so no
+  balance shift for existing holds): +4 popCap, +2 defense, +1 troop cap per
+  level. Steward upgrades it when the hold prospers. build(keep)/startSite(keep)
+  guarded so there's never a 2nd keep. Harness extended (47 assertions).
+  EYEBALL: the keep should visibly grow taller when upgraded; wall-course tiles
+  108–110 are the documented keep art but only your render confirms they seat.
 - 2026-07-13: **F2 done** — buildings now have PER-INSTANCE levels. `game.js`
   `lvl` (pooled count+output) → `instances[id]=[lvlA,…]`; `level(id)`=sum (all
   downstream unchanged), `count(id)`=sprites, new `upgrade`/`upgradeAny`/

@@ -59,6 +59,8 @@ const BUILDINGS = [
     cost: { timber: 22, stone: 14 }, desc: 'A shrine over a shard of the Fallen — widens the god’s voice (one more speaker, longer word).' },
   { id: 'barracks', name: 'Barracks', kind: 'defense', def: 2,
     cost: { timber: 20, stone: 16, ore: 6 }, desc: 'Garrison and drill-yard — houses soldiers and strengthens the hold’s martial readiness.' },
+  { id: 'keep', name: 'The Keep', kind: 'civic',
+    cost: { timber: 30, stone: 30, coin: 20 }, desc: 'The lord’s hall and stronghold — expanding it quarters more folk and stiffens the hold’s defense and muster.' },
 ];
 const BY_ID = Object.fromEntries(BUILDINGS.map((b) => [b.id, b]));
 
@@ -201,6 +203,7 @@ class Game {
     this.farmPlots = this.farmPlots || [];
     this.migrateInstances(); // old pooled lvl → per-building instances (+ seed fields from an old lvl.farm)
     this.migrateFood(); // split a pre-crop save's pooled food + retag old plot crops
+    if (!this.instances.keep) this.instances.keep = [1]; // the keep always stands (level 1 from founding)
     // Spoilage read-outs (transient, for the HUD) — recomputed each tick by
     // stepSpoilage. spoilTally counts notable turns (town.js mirrors it to the
     // on-screen chronicle, like raids); _spoilAccrue banks small losses toward
@@ -354,6 +357,7 @@ class Game {
     const c = this.costOf(id);
     for (const [k, v] of Object.entries(c)) this.res[k] -= v;
     if (id === 'farm') return true;
+    if (id === 'keep') { this.instances.keep[0] += 1; return true; } // never a 2nd keep — deepen the one that stands
     (this.instances[id] || (this.instances[id] = [])).push(1);
     return true;
   }
@@ -363,7 +367,7 @@ class Game {
   // (more output/capacity from the same footprint), as distinct from build()
   // raising a new one. Farms upgrade by field SIZE (expandFarm) — the same
   // idea that predates this system.
-  instanceMax(id) { return id === 'farm' ? 3 : 6; }
+  instanceMax(id) { return id === 'farm' ? 3 : id === 'keep' ? 4 : 6; }
   upgradeCost(id, idx) {
     const b = BY_ID[id], L = this.instanceLevel(id, idx), out = {};
     for (const [k, v] of Object.entries(b.cost)) out[k] = Math.ceil(v * 0.8 * Math.pow(CFG.costScale, L));
@@ -417,6 +421,7 @@ class Game {
   popCap() {
     let cap = 8 + this.bon.popCapBonus;
     cap += this.level('longhouse') * BY_ID.longhouse.pop;
+    cap += this.keepPop();
     return cap;
   }
 
@@ -427,10 +432,18 @@ class Game {
     const contributors = [];
     const lh = this.level('longhouse');
     if (lh > 0) contributors.push({ id: 'longhouse', name: BY_ID.longhouse.name, count: lh, add: lh * BY_ID.longhouse.pop });
+    const kp = this.keepPop();
+    if (kp > 0) contributors.push({ id: 'keep', name: 'The Keep', count: this.level('keep'), add: kp });
     return { base, contributors, total: this.popCap() };
   }
 
-  defense() { return this.level('palisade') * BY_ID.palisade.def + this.level('barracks') * BY_ID.barracks.def + this.bon.defBonus; }
+  defense() { return this.level('palisade') * BY_ID.palisade.def + this.level('barracks') * BY_ID.barracks.def + this.bon.defBonus + this.keepDef(); }
+
+  // keepDef/keepPop — the keep's functional worth, all ABOVE its founding
+  // level 1 (so a level-1 keep leaves the old balance exactly): each level
+  // raised adds +2 defense and +4 people cap (and +1 troop cap, see troopCap).
+  keepDef() { return Math.max(0, this.level('keep') - 1) * 2; }
+  keepPop() { return Math.max(0, this.level('keep') - 1) * 4; }
 
   // speakers — how many voices the hold's shrines give the fallen god: one
   // always present, plus one more per reliquary raised.

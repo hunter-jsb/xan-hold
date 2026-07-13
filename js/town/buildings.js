@@ -129,7 +129,7 @@ export function isInsideWalls(tx, ty) { return insideCore(tx, ty); }
 export function districtOf(h) {
   if (!h) return null;
   if (h.type === 'farm') return 'farmland';
-  if (!h.type || CORE_TYPES.has(h.type)) return 'core'; // keep has no .type
+  if (!h.type || h.type === 'keep' || CORE_TYPES.has(h.type)) return 'core';
   if (OUTER_TYPES.has(h.type)) return 'works';
   return null;
 }
@@ -303,22 +303,53 @@ export function mineNodeAvailable() {
   return S.game.canDeepen('mine');
 }
 
+// keepRecipe composes the keep at a given level: a battlemented gatehouse that
+// grows TALLER each level (extra wall courses between battlements and gate), so
+// upgrading physically expands the stronghold. Level 1 is byte-identical to the
+// old fixed keep, so existing holds see no change until the keep is raised.
+export function keepRecipe(level) {
+  const courses = Math.max(0, level - 1);
+  const tiles = [{ i: 96, x: 0, y: 0 }, { i: 97, x: 1, y: 0 }, { i: 98, x: 2, y: 0 }]; // battlements
+  let y = 1;
+  for (let c = 0; c < courses; c++) { tiles.push({ i: 108, x: 0, y }, { i: 109, x: 1, y }, { i: 110, x: 2, y }); y++; } // wall courses
+  tiles.push({ i: 120, x: 0, y }, { i: 124, x: 1, y }, { i: 122, x: 2, y }); // gated base
+  return { w: 3, h: y + 1, tiles };
+}
+
 export function placeTownhall() {
-  const recipe = S.atlas.RECIPES.townhall;
+  S.keepLevel = -1;   // force the first renderKeep to draw
+  renderKeep();
+}
+
+// renderKeep (re)draws the keep to match its current level — a taller, grander
+// gatehouse each level. Only redraws when the level changed (cheap). The base
+// row stays pinned on CENTER (everything agrees on it); the keep rises upward
+// as it grows, so its centre plot never moves.
+export function renderKeep() {
+  const level = S.game.level('keep');
+  if (S.keepLevel === level) return;
+  S.keepLevel = level;
+  if (S.keepContainer) { S.entities.removeChild(S.keepContainer); S.keepContainer.destroy({ children: true }); }
+  const recipe = keepRecipe(level);
   const c = makeBuildingContainer(recipe, null);
-  // The keep sits dead-centre on CENTER — the one point everything else agrees
-  // on. Footprint centred on CENTER_TX, base row on CENTER_TY.
   c.x = (CENTER_TX - Math.floor(recipe.w / 2)) * TILE;
-  c.y = (CENTER_TY - recipe.h) * TILE;
+  c.y = (CENTER_TY - recipe.h) * TILE;          // base row on CENTER_TY, keep rising above
   c.zIndex = c.y + recipe.h * TILE;
   S.entities.addChild(c);
-  // Reserve every plot the footprint (through its base row) touches, so no
-  // other building lands on the keep; the centre plot is the keep's key.
-  const x0 = pxToTile(c.x), y0 = pxToTile(c.y), x1 = x0 + recipe.w - 1, y1 = CENTER_TY;
-  for (let py = Math.floor(y0 / PLOT); py <= Math.floor(y1 / PLOT); py++)
-    for (let px = Math.floor(x0 / PLOT); px <= Math.floor(x1 / PLOT); px++) S.usedPlots.add(`${px},${py}`);
-  S.keepKey = `${Math.floor(CENTER_TX / PLOT)},${Math.floor(CENTER_TY / PLOT)}`;
-  S.hittable.push({ x0: c.x / TILE, y0: c.y / TILE, x1: c.x / TILE + recipe.w, y1: c.y / TILE + recipe.h, label: S.hold.name + ' — the keep' });
+  S.keepContainer = c;
+  if (!S.keepPlaced) {
+    // Reserve the keep's growth column ONCE, up to a MAX-level keep's height, so
+    // no building ever lands where a taller keep will rise. Centre plot = key.
+    S.keepPlaced = true;
+    const maxH = keepRecipe(S.game.instanceMax('keep')).h;
+    const tx0 = pxToTile(c.x), tx1 = tx0 + recipe.w - 1;
+    const yTop = Math.floor((CENTER_TY - maxH) / PLOT), yBot = Math.floor(CENTER_TY / PLOT);
+    for (let py = yTop; py <= yBot; py++)
+      for (let px = Math.floor(tx0 / PLOT); px <= Math.floor(tx1 / PLOT); px++) S.usedPlots.add(`${px},${py}`);
+    S.keepKey = `${Math.floor(CENTER_TX / PLOT)},${Math.floor(CENTER_TY / PLOT)}`;
+  }
+  S.hittable = S.hittable.filter((h) => h.type !== 'keep');
+  S.hittable.push({ type: 'keep', key: 'keep#0', x0: c.x / TILE, y0: c.y / TILE, x1: c.x / TILE + recipe.w, y1: c.y / TILE + recipe.h, label: S.hold.name + ' — the keep' });
 }
 
 // Desired count of each building type = its physical-building count now that
@@ -327,7 +358,7 @@ export function placeTownhall() {
 export function desiredCounts() {
   const d = {};
   for (const b of BUILDINGS) {
-    if (b.id === 'palisade' || b.id === 'farm') continue; // palisade = wall; farm = drawn from farmPlots
+    if (b.id === 'palisade' || b.id === 'farm' || b.id === 'keep') continue; // palisade = wall; farm = farmPlots; keep = renderKeep
     const n = S.game.count(b.id);
     if (n > 0) d[b.id] = n;
   }
@@ -417,6 +448,7 @@ export function reconcileBuildings() {
     }
   }
   updateLevelBadges();
+  renderKeep();         // a keep upgrade re-renders it taller
   reconcileFarms();
   renderWalls();
 }
@@ -617,6 +649,7 @@ export function makeScaffold(recipe, cx, cy) {
 // there's nothing to build OR deepen right now (the caller waits + retries).
 export function startSite(type) {
   if (type === 'farm') return startFarmSite(); // a field, not a recipe/plot building — its own site path
+  if (type === 'keep') return S.game.upgradeAny('keep') ? 'instant' : null; // central + singular — a build order just deepens it
   if (S.game.count(type) >= MAX_PER_TYPE) return S.game.upgradeAny(type) ? 'instant' : null;
   const { recipe, prop } = recipeFor(type);
   const alloc = allocatePlot(type, recipe);

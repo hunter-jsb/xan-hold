@@ -147,7 +147,8 @@ export function fortSpans() {
 // barracks houses, and +2 per fort span (tower-linked wood/stone wall).
 export function troopCap() {
   const barracks = S.game ? S.game.level('barracks') : 0;
-  return 2 + barracks * 4 + fortSpans() * 2;
+  const keep = S.game ? Math.max(0, S.game.level('keep') - 1) : 0; // a grander keep musters more
+  return 2 + barracks * 4 + fortSpans() * 2 + keep;
 }
 
 // wallPieceFor picks the fence sprite + rotation for a wall tile from its
