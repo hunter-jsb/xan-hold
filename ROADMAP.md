@@ -1,6 +1,24 @@
 # Steward of a Hold — autonomous roadmap
 
-Driven autonomously (2026-07-12) while Hunter is away. Method per feature:
+## ✅ STATUS: ALL 11 FEATURES COMPLETE (2026-07-13)
+Every item below is built, committed, and verified (verifier + two engine
+harnesses). Nothing is left half-done. What I could NOT check is rendering
+(no GPU here) — so when you're back, eyeball these render-only bits:
+
+- **F1** hover a building → its district outlines (core box / farmland perimeter).
+- **F2** upgraded buildings show a small gold pip-stack; tooltip shows the building's OWN level.
+- **F3** the keep grows TALLER when upgraded (wall-course tiles 108–110 — confirm they seat cleanly).
+- **F4** deeper nights, a warm golden-hour tint at dawn/dusk, a faint per-season colour wash; the "sky" HUD chip.
+- **F6** the "Study" HUD chip + the Scholars' Hall sprite (reuses a cottage recipe).
+- **F7** sectioned rings (core, then farmland) + tier tints (wood brown / stone grey) + corner watchtowers.
+- **F8** red raider sprites path in through the GATES, soldiers clash with them, they retreat/loot.
+- **F9** the Pop chip's ⛪ parishes line (N·N·N).
+- **F10** the log popout's filter chips (All/Raids/Spoilage/Discoveries/Sickness/Notes).
+- **F11** a stranded core building trucking (🚚) back inside as the core shifts.
+- **Server:** restart `node serve.mjs` so the Will/speaker prompt changes (research, defenses, fealty/mood) take effect.
+- Tower sprite scale/anchor was guessed at ~2.6 tiles (from the earlier walls fork) — may need a nudge.
+
+Driven autonomously (2026-07-12/13) while Hunter is away. Method per feature:
 **research → fan out to a cheap subagent → review → verify → commit → next.**
 Verifier: `node scratchpad/verify.mjs` (syntax + import-resolution + cross-module
 refs — the closest thing to "does it boot" without a GPU). Each feature is its
