@@ -111,6 +111,7 @@ async function boot() {
   setInterval(townTick, 1000);
   setInterval(localSteward, LOCAL_MS);
   setInterval(() => callWill('the turning of the season'), STEWARD_MS);
+  setInterval(dumpState, 2500); // debug: keep debug-dump.json fresh for GPU-less inspection (temporary)
   // No decree on boot — the town runs on its local heuristic and only spends
   // a Claude call every STEWARD_MS or when you press P, so reloads are free.
 }
@@ -454,25 +455,37 @@ function townTick() {
 
 
 
-// dumpState POSTs a live diagnostic snapshot to the local server
-// (→ debug-dump.json) so state can be inspected without a GPU. Press 'i'.
+// dumpState POSTs a FULL live diagnostic snapshot to the local server
+// (→ debug-dump.json) so state can be inspected without a GPU. Runs on a timer
+// (boot) so the file is always fresh; 'i' forces one now. (temporary)
 function dumpState() {
   const g = S.game, B = window.XANGAME.BUILDINGS;
+  const R = (o) => Object.fromEntries(Object.entries(o).map(([k, v]) => [k, Math.round(v)]));
+  const R2 = (o) => Object.fromEntries(Object.entries(o).map(([k, v]) => [k, +Number(v).toFixed(2)]));
+  const perB = (fn) => Object.fromEntries(B.map((b) => [b.id, fn(b)]).filter(([, v]) => v));
+  const roleCounts = {};
+  for (const v of S.villagers) roleCounts[v.role] = (roleCounts[v.role] || 0) + 1;
   const snap = {
     at: new Date().toISOString(),
-    pop: Math.floor(g.pop), popCap: g.popCap(), happiness: +(g.happiness ?? 0).toFixed(2), starving: !!g.starving,
-    res: Object.fromEntries(Object.entries(g.res).map(([k, v]) => [k, Math.round(v)])),
-    caps: Object.fromEntries(Object.entries(g.caps()).map(([k, v]) => [k, Math.round(v)])),
-    levels: Object.fromEntries(B.map((b) => [b.id, g.level(b.id)]).filter(([, v]) => v)),
-    counts: Object.fromEntries(B.map((b) => [b.id, g.count(b.id)]).filter(([, v]) => v)),
-    instances: g.instances,
-    orders: S.orderLog.map((o) => `${o.type}:${o.target || o.section || ''}=${o.status}`),
-    focus: S.focus, speakers: g.speakers(), parishes: S.parishSizes,
-    insight: Math.round(g.research.insight), discoveries: g.research.done,
-    sectionTier: S.sectionTier, wallTiles: S.walls.size, placed: [...S.placed.keys()],
+    hold: { name: S.hold.name, tier: S.hold.tierName, realm: S.hold.realm, danger: S.hold.danger, rich: R2(S.hold.rich) },
+    time: { season: g.seasonName(), dayPart: g.dayPartName(), warmthNow: +g.warmthNow().toFixed(2) },
+    pop: +g.pop.toFixed(1), popCap: g.popCap(), efficiency: +g.efficiency().toFixed(2), jobs: g.jobs(),
+    villagers: S.villagers.length, roleCounts,
+    happiness: +(g.happiness ?? 0).toFixed(2), moraleShock: +(g.moraleShock || 0).toFixed(2), starving: !!g.starving,
+    res: R(g.res), caps: R(g.caps()), rates: R2(g.rates()),
+    food: { total: Math.round(g.foodTotal()), cap: Math.round(g.foodCapTotal()), eatPerS: +g.foodEatPerS().toFixed(2), onGround: +g.foodOnGround().toFixed(2) },
+    levels: perB((b) => g.level(b.id)), counts: perB((b) => g.count(b.id)), instances: g.instances,
+    defense: g.defense(),
+    faith: { now: Math.round(g.faith), threshold: g.faithThreshold(), speakers: g.speakers() },
+    research: { insight: Math.round(g.research.insight), researchers: g.researchers(), done: g.research.done, next: (g.researchNext() || {}).name || null },
+    focus: S.focus, fealty: S.parishSizes,
+    orders: S.orderLog.map((o) => ({ type: o.type, target: o.target, section: o.section, upgrade: o.upgrade, status: o.status, progress: +(o.progress || 0).toFixed(2), qtyLeft: o.qtyLeft, waited: +(o.waited || 0).toFixed(1) })),
+    walls: { tiles: S.walls.size, gates: S.gates.size, towers: S.towers.size, sectionTier: S.sectionTier, edges: [...S.wallEdgesBuilt] },
+    town: { placed: [...S.placed.keys()], sites: S.sites.length, siteKeys: [...S.siteKeys], usedPlots: S.usedPlots.size, farmTiles: S.farmTiles.size, raiders: (S.raiders || []).length },
+    lastWill: S.lastWill ? { utterance: S.lastWill.utterance, speakers: (S.lastWill.speakers || []).map((sp) => ({ name: sp.name, directive: sp.directive, orders: (sp.orders || []).map((o) => `${o.type}:${o.target || o.value || o.resource || ''}`) })) } : null,
+    chronicle: (S.chronicle || []).slice(0, 12).map((c) => c.text),
   };
-  fetch('/debug', { method: 'POST', body: JSON.stringify(snap, null, 2) })
-    .then(() => pushChronicle('📋 state dumped', 'note')).catch(() => {});
+  fetch('/debug', { method: 'POST', body: JSON.stringify(snap, null, 2) }).catch(() => {});
 }
 
 // ---- input ----------------------------------------------------------
