@@ -24,7 +24,7 @@ own commit so anything can be rolled back.
 ## Sequence (dependency-ordered)
 | # | feature | touches | status |
 |---|---------|---------|--------|
-| F1 | district-border highlight on hover | town.js | ☐ |
+| F1 | district-border highlight on hover | town.js | ✅ |
 | F2 | per-instance building levels + upgrade action | game.js, buildings.js, town.js, hud.js | ☐ |
 | F3 | keep as an upgradeable building (physical + functional) | game.js, buildings.js, town.js | ☐ |
 | F4 | seasons + clearer day/night | game.js, terrain.js, town.js, hud.js | ☐ |
@@ -49,3 +49,7 @@ elevation, nearby named features, and realm history. Nothing is invented.
 - 2026-07-12: baseline checkpointed (the full town.js modularization + walls
   rework 2 + 5-food-category system + spoilage, all previously uncommitted).
   Verifier rebuilt at scratchpad/verify.mjs, clean.
+- 2026-07-12: **F1 done** — hovering a building now outlines its district on the
+  ground (core = the walled bounding box, farmland = the true tilled perimeter;
+  outlands works stay just a footprint) + tooltip tags the district. buildings.js
+  gains districtOf()/coreBounds(); town.js gains drawDistrictBorder().

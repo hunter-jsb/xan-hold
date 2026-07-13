@@ -10,7 +10,7 @@ import { TOWN_W, TOWN_H, CENTER_TX, CENTER_TY, DAY_MS, STEWARD_MS, LOCAL_MS, ROL
 import { S, heldKeys } from './state.js';
 import { loadWalls } from './walls.js';
 import { buildPlots, paintGround, placeOreNodes, placeWater } from './terrain.js';
-import { placeTownhall, reconcileBuildings } from './buildings.js';
+import { placeTownhall, reconcileBuildings, districtOf, coreBounds } from './buildings.js';
 import { stepVillager, reconcileVillagers } from './villagers.js';
 import { initHUD, updateHUD, renderOrders, pushChronicle } from './hud.js';
 import { executeOrders, localSteward } from './orders.js';
@@ -232,6 +232,7 @@ function hoverIdentify(e) {
   let text = h.label || BUILD_NAME[h.type] || h.type;
   if (h.type) { const lv = S.game.level(h.type); if (lv) text += ' · lvl ' + lv; }
   if (h.type && BY_ID[h.type] && BY_ID[h.type].kind === 'storage') { const fill = storageFill(h.type); if (fill) text += ' · ' + fill; }
+  const dist = districtOf(h); if (dist) text += ' · ' + DISTRICT_NAME[dist];
   tip.textContent = text;
   tip.style.left = e.clientX + 'px'; tip.style.top = e.clientY + 'px';
   tip.style.display = 'block';
@@ -291,19 +292,56 @@ function refreshHighlights(now) {
   }
 }
 
-// setHoverBuilding swaps the hovered building: redraws its subtle outline and
-// tears down old rings immediately (refreshHighlights repopulates them next
-// frame — S.highlightAt is reset so the throttle doesn't delay it).
+// setHoverBuilding swaps the hovered building: redraws its subtle outline, the
+// boundary of the DISTRICT it sits in (core / farmland), and tears down old
+// rings immediately (refreshHighlights repopulates them next frame —
+// S.highlightAt is reset so the throttle doesn't delay it).
 function setHoverBuilding(h) {
   if (S.hoverGfx) { S.ground.removeChild(S.hoverGfx); S.hoverGfx.destroy(); S.hoverGfx = null; }
+  if (S.districtGfx) { S.ground.removeChild(S.districtGfx); S.districtGfx.destroy(); S.districtGfx = null; }
   S.hoverBuilding = h;
   clearHighlightRings();
   S.highlightAt = 0;
   if (h) {
+    drawDistrictBorder(districtOf(h));   // under the footprint, so the building's own outline reads on top
     const x0 = h.x0 * TILE, y0 = h.y0 * TILE, w = (h.x1 - h.x0) * TILE, ht = (h.y1 - h.y0) * TILE;
     S.hoverGfx = new Graphics().rect(x0, y0, w, ht).stroke({ width: 2, color: 0xfff3c0, alpha: 0.55 });
     S.ground.addChild(S.hoverGfx);
   }
+}
+
+// A district's name (tooltip) + border colour (the hover outline).
+const DISTRICT_NAME = { core: 'Keep district', farmland: 'Farmland', works: 'Outlands' };
+const DISTRICT_COLOR = { core: 0xffcf5a, farmland: 0x8fd24a };
+
+// drawDistrictBorder outlines the hovered building's district on the ground
+// layer: the core as its bounding box (what the walls enclose), farmland as
+// the true perimeter of the tilled tiles. The outlands works aren't a bounded
+// district, so they draw no border (just the building's own footprint).
+function drawDistrictBorder(district) {
+  const col = DISTRICT_COLOR[district];
+  if (!col) return;
+  let g = null;
+  if (district === 'core') {
+    const b = coreBounds();
+    if (!b) return;
+    g = new Graphics()
+      .rect(b.x0 * TILE, b.y0 * TILE, (b.x1 - b.x0) * TILE, (b.y1 - b.y0) * TILE)
+      .fill({ color: col, alpha: 0.05 }).stroke({ width: 2, color: col, alpha: 0.6 });
+  } else if (district === 'farmland') {
+    g = new Graphics();
+    for (const key of S.farmTiles.keys()) { const [tx, ty] = key.split(',').map(Number); g.rect(tx * TILE, ty * TILE, TILE, TILE); }
+    g.fill({ color: col, alpha: 0.05 });
+    for (const key of S.farmTiles.keys()) {
+      const [tx, ty] = key.split(',').map(Number); const x = tx * TILE, y = ty * TILE;
+      if (!S.farmTiles.has(`${tx},${ty - 1}`)) g.moveTo(x, y).lineTo(x + TILE, y);
+      if (!S.farmTiles.has(`${tx},${ty + 1}`)) g.moveTo(x, y + TILE).lineTo(x + TILE, y + TILE);
+      if (!S.farmTiles.has(`${tx - 1},${ty}`)) g.moveTo(x, y).lineTo(x, y + TILE);
+      if (!S.farmTiles.has(`${tx + 1},${ty}`)) g.moveTo(x + TILE, y).lineTo(x + TILE, y + TILE);
+    }
+    g.stroke({ width: 2, color: col, alpha: 0.65 });
+  }
+  if (g) { S.districtGfx = g; S.ground.addChild(g); }
 }
 
 function initPan() {

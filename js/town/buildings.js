@@ -123,6 +123,29 @@ export function plotInCore(px, py) {
 export function insideCore(tx, ty) { return plotInCore(tx / PLOT, ty / PLOT); }
 export function isInsideWalls(tx, ty) { return insideCore(tx, ty); }
 
+// districtOf — which district a hovered building sits in (for the hover
+// border): the walled core (dwellings/stores/command + the keep, which has no
+// type), the farmland, or the scattered outlands works. null = uncategorized.
+export function districtOf(h) {
+  if (!h) return null;
+  if (h.type === 'farm') return 'farmland';
+  if (!h.type || CORE_TYPES.has(h.type)) return 'core'; // keep has no .type
+  if (OUTER_TYPES.has(h.type)) return 'works';
+  return null;
+}
+
+// coreBounds — the core district's tile bounding box: the zone plotInCore
+// encloses (what the walls trace). null before any plot exists.
+export function coreBounds() {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const p of S.plots) {
+    if (!plotInCore(p.px, p.py)) continue;
+    x0 = Math.min(x0, p.tx); y0 = Math.min(y0, p.ty);
+    x1 = Math.max(x1, p.tx + PLOT); y1 = Math.max(y1, p.ty + PLOT);
+  }
+  return x0 === Infinity ? null : { x0, y0, x1, y1 };
+}
+
 // nextCorePlot sites a CORE building (dwellings/stores/faith/command)
 // inside the walled core zone, nearest the centre first (S.plots is already
 // distance-sorted) — never on an ore/water-reserved cell.
