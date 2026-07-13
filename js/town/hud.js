@@ -5,6 +5,7 @@ import { S } from './state.js';
 import { ORDER, TRADE_ACT, BUILD_NAME, ROLE, ROLE_LABEL, ROLE_PIP } from './constants.js';
 import { makePanel, makePopout } from './ui.js';
 import { troopCap } from './walls.js';
+import { discoveredList, nextDiscovery, RESEARCH_TOTAL } from './research.js';
 
 const { BUILDINGS, BY_ID, CFG, FOOD, FOOD_CATS, CROP_BY_ID } = window.XANGAME;
 
@@ -140,7 +141,20 @@ export function updateHUD() {
     + `<div class="chip-cap">${swing}</div>`;
   const skyChip = chip('sky', `${dayGlyph} ${seasonGlyph}`, skyRows);
 
-  document.getElementById('resstrip').innerHTML = catChips + popChip + faithChip + skyChip;
+  // Study: the hold's discoveries of its own land (research.js/game.js). Not a
+  // resource — a count of what's charted, expanding to the sciences + lore made
+  // and the insight welling toward the next.
+  const disc = discoveredList();
+  const group = (label, arr) => arr.length
+    ? `<div class="chip-cap">${label}</div>` + arr.map((d) => `<div class="chip-row"><span title="${d.flavor.replace(/"/g, '')}">${d.name}</span><b class="up">✓</b></div>`).join('') : '';
+  const nd = nextDiscovery();
+  const studyFoot = nd
+    ? `<div class="chip-foot"><span>toward ${nd.name}</span><b>${Math.floor(g.research.insight)}/${nd.cost}</b></div>`
+    : `<div class="chip-foot"><span>study</span><b>all its ground can teach</b></div>`;
+  const studyRows = (disc.length ? group('Sciences', disc.filter((d) => d.cat === 'science')) + group('Lore', disc.filter((d) => d.cat === 'lore')) : '<div class="dim">no discoveries yet</div>') + studyFoot;
+  const studyChip = chip('study', `📖 ${g.research.done.length}/${RESEARCH_TOTAL}`, studyRows);
+
+  document.getElementById('resstrip').innerHTML = catChips + popChip + faithChip + studyChip + skyChip;
 }
 
 // initChipToggle: clicking a chip's collapsed head pins it open (toggle);

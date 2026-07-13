@@ -57,6 +57,7 @@ const PROP = { sawmill: 106, quarry: 115, mine: 115, saltern: 130, granary: 130,
 const HOUSE_OF = {
   sawmill: 'cottageRed', quarry: 'mineHut', mine: 'mineHut',
   saltern: 'cottageWarm', granary: 'cottageRed', wharf: 'cottageGrey', longhouse: 'cottageWarm',
+  scholarshall: 'cottageGrey',
 };
 
 // Ground tiles by biome flavor.

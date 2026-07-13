@@ -116,6 +116,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); }
 .cl { font-size: 12px; line-height: 1.35; opacity: .92; }
 .cl.raid { color: var(--bad); }
 .cl.note { color: var(--dim); }
+.cl.discovery { color: var(--gold); }
 .will-status { font-size: 11px; color: var(--dim); margin-top: 6px; min-height: 13px; }
 
 /* order log entries */

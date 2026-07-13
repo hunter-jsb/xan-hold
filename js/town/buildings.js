@@ -69,7 +69,7 @@ export function recipeFor(type) {
 // terrain-biased non-self-siting works (nextOuterPlot; sawmill/quarry/
 // saltern), and the farmland district that clusters fields instead of
 // scattering them (nextFarmPlot/farmlandAnchor — the sprawl fix).
-const CORE_TYPES = new Set(['longhouse', 'granary', 'reliquary', 'market', 'barracks']);
+const CORE_TYPES = new Set(['longhouse', 'granary', 'reliquary', 'market', 'barracks', 'scholarshall']);
 const OUTER_TYPES = new Set(['farm', 'wharf', 'mine', 'sawmill', 'quarry', 'saltern']);
 const CORE_R0 = 2, CORE_GROW_EVERY = 3, CORE_R_MAX = 6; // plot-units (×PLOT tiles) — see coreRadius
 

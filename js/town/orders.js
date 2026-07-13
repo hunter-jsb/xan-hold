@@ -304,6 +304,8 @@ export function localSteward() {
   if (S.focus === FOCUS.FOOD) want.push('farm');
   // Raise the faith now and then — reliquaries widen the Will's voice.
   if (g.level('reliquary') < 4 && g.pop > 12 && Math.random() < 0.12) want.push('reliquary');
+  // Found a Scholars' Hall once the hold is established — it quickens research.
+  if (g.count('scholarshall') < 1 && g.pop > 10 && Math.random() < 0.1) want.push('scholarshall');
   // then the hold's richest producers — richness sets the lean, but a random
   // jitter keeps the build ORDER from being identical every run (the town
   // shouldn't develop the exact same way every playthrough).

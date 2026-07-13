@@ -433,6 +433,13 @@ function townTick() {
     if (last) pushChronicle('🥀 ' + last.text, 'note');
   }
   S.lastSpoilTally = st;
+  // a new discovery since last look → chronicle it (mirrors raids/spoilage)
+  const disc = S.game.discoveryTally || 0;
+  if (disc > (S.lastDiscoveryTally || 0)) {
+    const last = S.game.log.find((l) => l.kind === 'discovery');
+    if (last) pushChronicle('📖 ' + last.text, 'discovery');
+  }
+  S.lastDiscoveryTally = disc;
   renderOrders();
   updateHUD(); // folds the Folk legend + defense into the Pop chip now
 }

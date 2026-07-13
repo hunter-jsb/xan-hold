@@ -29,7 +29,7 @@ own commit so anything can be rolled back.
 | F3 | keep as an upgradeable building (physical + functional) | game.js, buildings.js, town.js | ✅ |
 | F4 | seasons + clearer day/night | game.js, terrain.js, town.js, hud.js | ✅ |
 | F5 | starvation, disease, unhappiness | game.js, hud.js | ☐ |
-| F6 | research — discover geology/salt/lore from world.js | new research.js, game.js, world.js, hud.js, serve.mjs | ☐ |
+| F6 | research — discover geology/salt/lore from world.js | new research.js, game.js, hud.js, serve.mjs | ✅ |
 | F7 | sectioned walls + wall levels | walls.js, orders.js, state.js | ☐ |
 | F8 | people fight raids; pathing affects clash | villagers.js, game.js, walls.js | ☐ |
 | F9 | speaker fealty (pop→speaker, head-speaker worker distro) | villagers.js, orders.js, will.js, serve.mjs | ☐ |
@@ -46,6 +46,16 @@ the REAL local rock/rockAge (geology), salt/salinity (deposits), drainage/river,
 elevation, nearby named features, and realm history. Nothing is invented.
 
 ## Log
+- 2026-07-13: **F6 done** (delegated to the Sonnet research subagent, reviewed +
+  verified by me). Research discovers the REAL simulated world: 14 discoveries
+  (7 sciences + 7 lore) each gated on the hold's actual seed-42 seat data
+  (rock/rockAge/drainage/salt/nearby features/realm age), unlocking live-read
+  economy bonuses. Insight accrues from a Scholars' Hall (mirrors faith→Will).
+  Bonuses are LIVE reads (never mutate `bon`), neutral at zero discoveries.
+  Reviewed: verifier clean; 54 model invariants intact; smoke harness 7,200
+  ticks no NaN/crash; confirmed window.XAN.idx/W + deriveHold x/y/nearby/
+  allegiance/elev all exist (no browser blank-screen). EYEBALL: the "Study" HUD
+  chip + the Scholars' Hall sprite are render-only.
 - 2026-07-13: **F4 done** — a year now turns through four seasons (CFG.seasonDays,
   ~8 min each). `warmthNow(offline)` = baseline climate + a seasonal ±0.18 swing,
   threaded into stepSpoilage AND rates() (crops), so summer grows fast but spoils

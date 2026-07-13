@@ -66,5 +66,5 @@ export const HIGHLIGHT_COLOR = { perma: 0xffd23a, temp: 0x38d6ff }; // gold = ho
 export const BUILD_NAME = {
   farm: 'Farm', wharf: 'Fishing Wharf', sawmill: 'Sawmill', quarry: 'Quarry',
   mine: 'Mine', saltern: 'Saltern', market: 'Market', longhouse: 'Longhouse',
-  granary: 'Storehouse', reliquary: 'Reliquary',
+  granary: 'Storehouse', reliquary: 'Reliquary', scholarshall: 'Scholars’ Hall',
 };

@@ -15,6 +15,7 @@ const CFG = {
   faithPerSpeaker: 0.4,   // faith/s each speaker (1 base + 1/reliquary) wells up
   faithBase: 60,          // faithThreshold() floor (at 1 speaker)
   faithPerSpeakerThresh: 40, // faithThreshold() rise per speaker
+  insightPerScholar: 0.1, // insight/s each scholar (1 base + 2/Scholars' Hall level) accrues toward a discovery
   dayMs: 240000,          // a full day/night in real ms — SHARED with town.js (daylight drives food spoilage + the night overlay)
   seasonDays: 2,          // real days per season (a year = 4× this) — season shifts warmth
   seasonWarmthAmp: 0.18,  // ± warmth swing between mid-summer and mid-winter
@@ -64,6 +65,8 @@ const BUILDINGS = [
     cost: { timber: 20, stone: 16, ore: 6 }, desc: 'Garrison and drill-yard — houses soldiers and strengthens the hold’s martial readiness.' },
   { id: 'keep', name: 'The Keep', kind: 'civic',
     cost: { timber: 30, stone: 30, coin: 20 }, desc: 'The lord’s hall and stronghold — expanding it quarters more folk and stiffens the hold’s defense and muster.' },
+  { id: 'scholarshall', name: 'Scholars’ Hall', kind: 'research',
+    cost: { timber: 20, stone: 12, coin: 10 }, desc: 'Archives the land’s own record — quickens the hold’s study of its rock, salt, waters, and lineage (see Research).' },
 ];
 const BY_ID = Object.fromEntries(BUILDINGS.map((b) => [b.id, b]));
 
@@ -131,6 +134,107 @@ function cropSuit(crop, warmth, water) {
   const wf = crop.water > 0 ? Math.max(0.15, Math.min(1, water / crop.water)) : 1;
   return climate * wf;
 }
+
+// ---- research: discovering the real simulated world --------------------
+// Every discovery is a NAMED decoding of a field the world dump (window.WORLD,
+// via window.XAN) already carries at the hold's seat — rock/rockAge/salt/
+// drainage/nearby features/realm history — never an invented fact. Names mirror
+// the sim's own enums (geology.go's Rock*, salt.go's SaltStanding, civ.go).
+// Effects are DATA read LIVE (researchMul/Def/Pop/…), so nothing mutates `bon`.
+const ROCK_NAME = { 1: 'basement shield', 2: 'orogenic rock', 3: 'marine sediment', 4: 'alluvium', 5: 'glacial till', 6: 'loess', 7: 'volcanic rock' };
+// Per-dominant-rock output lean (from geology.go's SoilFertility + lithology).
+const ROCK_BONUS = { 1: { ore: 1.08, stone: 1.06 }, 2: { ore: 1.12 }, 3: { salt: 1.08 }, 4: { food: 1.08 }, 5: { stone: 1.08 }, 6: { food: 1.06, timber: 1.04 }, 7: { food: 1.06, ore: 1.06 } };
+
+// domRockId — the hold's dominant bedrock id (mode of the neighborhood tally).
+function domRockId(h) {
+  let best = 0, bc = -1;
+  for (const [id, c] of Object.entries((h.n && h.n.rock) || {})) if (c > bc) { bc = c; best = +id; }
+  return best;
+}
+// researchSeatData reads the seat-cell fields deriveHold doesn't surface
+// (rockAge, drainage, realm age), straight from window.WORLD. Constant per hold.
+function researchSeatData(h) {
+  let rockAge = 0, drainage = 0, realmAge = 1;
+  const X = window.XAN;
+  if (X) {
+    const i = X.idx(h.x, h.y);
+    rockAge = X.W.rockAge[i] || 0; drainage = X.W.drainage[i] || 0;
+    const rm = X.W.realms.find((r) => r.name === h.realm);
+    if (rm) realmAge = rm.age || 1;
+  }
+  return { rockAge, drainage, realmAge, rock: domRockId(h), elev: Math.round(h.elev || 0) };
+}
+// nearest named feature of a kind within the hold's charted radius (hold.nearby).
+function nearFeat(h, ...kinds) { return (h.nearby || []).find((f) => kinds.includes(f.kind)) || null; }
+// rockAgeBand — the geologic depth of the surface, against the sim's own marks
+// (meltKya≈20, LGM≈205ka from era.go).
+function rockAgeBand(ka) { return ka < 20 ? 'post-Melt' : ka < 100 ? 'Holocene' : ka < 205 ? 'glacial' : 'Old Ice'; }
+
+// The catalogue: 7 Sciences + 7 Lore. `gate(h, sd)` is the data test (only
+// discoverable where the seed-42 ground supports it); `flavor` cites the real
+// value; `eff` (object or (h,sd)=>object) is applied live. `requires` gates a
+// small dependency tree; `cost` is insight (tier 1≈40 / 2≈90 / 3≈160).
+const RESEARCH = [
+  // --- Sciences ---
+  { id: 'bedrock', cat: 'science', name: 'Bedrock Survey', tier: 1, cost: 40, requires: [],
+    gate: () => true,
+    flavor: (h) => `the ground is chiefly ${ROCK_NAME[domRockId(h)] || 'unknown rock'}`,
+    eff: (h) => ({ mul: ROCK_BONUS[domRockId(h)] || {} }) },
+  { id: 'groundage', cat: 'science', name: 'The Ground’s Age', tier: 2, cost: 90, requires: ['bedrock'],
+    gate: () => true,
+    flavor: (h, sd) => `the surface was laid down ${sd.rockAge}ka past — ${rockAgeBand(sd.rockAge)} ground`,
+    eff: (h, sd) => (sd.rockAge < 20 ? { mul: { food: 1.04 } } : sd.rockAge < 100 ? { mul: { stone: 1.04 } } : sd.rockAge < 205 ? { mul: { ore: 1.06 } } : { mul: { ore: 1.08 } }) },
+  { id: 'hydrology', cat: 'science', name: 'Charting the Waters', tier: 2, cost: 90, requires: [],
+    gate: (h, sd) => (h.n && h.n.riverMax >= 3) || sd.drainage >= 100,
+    flavor: (h, sd) => `a catchment of ${sd.drainage} draining cells feeds the ground`,
+    eff: { mul: { food: 1.08 } } },
+  { id: 'husbandry', cat: 'science', name: 'The Good Ground', tier: 2, cost: 90, requires: [],
+    gate: (h) => (h.rich.food || 0) >= 0.5,
+    flavor: () => 'the fields answer to rotation and careful tillage',
+    eff: { mul: { food: 1.06 } } },
+  { id: 'saltassay', cat: 'science', name: 'Salt Assay', tier: 2, cost: 90, requires: [],
+    gate: (h) => (h.rich.salt || 0) >= 0.12,
+    flavor: (h) => `salt stands ${(h.rich.salt || 0) >= 0.45 ? 'salt-rich' : 'salt-fed'} here`,
+    eff: (h) => ((h.rich.salt || 0) >= 0.45 ? { preserveAdd: 0.05, mul: { salt: 1.15 } } : { preserveAdd: 0.05 }) },
+  { id: 'climatology', cat: 'science', name: 'Reading the Sky', tier: 1, cost: 40, requires: [],
+    gate: () => true,
+    flavor: (h) => `the air runs ${h.tempBand}`,
+    eff: (h) => (h.tempBand === 'frigid' || h.tempBand === 'cold' ? { spoilMul: 0.9 } : h.tempBand === 'warm' || h.tempBand === 'sweltering' ? { preserveAdd: 0.05 } : {}) },
+  { id: 'metallurgy', cat: 'science', name: 'Assay the Vein', tier: 3, cost: 160, requires: ['bedrock', 'groundage'],
+    gate: (h) => (h.rich.ore || 0) >= 0.5,
+    flavor: (h) => `the rock is ore-rich (${Math.round((h.rich.ore || 0) * 100)}%) — worth the shaft`,
+    eff: { mul: { ore: 1.15 }, def: 1 } },
+  // --- Lore ---
+  { id: 'ancestry', cat: 'lore', name: 'Whose the Land', tier: 1, cost: 40, requires: [],
+    gate: () => true,
+    flavor: (h) => `${h.ancestry === 'Northern' ? 'the mammoth-blood of the frozen north' : h.ancestry === 'Coastal' ? 'shore-folk of the receded coast' : 'the hybrid river-stock of the cradle'} settled it`,
+    eff: { pop: 1 } },
+  { id: 'realmage', cat: 'lore', name: 'The Realm’s Age', tier: 1, cost: 40, requires: [],
+    gate: () => true,
+    flavor: (h, sd) => `${h.realm} has stood ${sd.realmAge} sealed age${sd.realmAge === 1 ? '' : 's'}`,
+    eff: (h, sd) => ({ mul: { coin: 1 + 0.05 * sd.realmAge } }) },
+  { id: 'allegiance', cat: 'lore', name: 'The Crown’s Reach', tier: 1, cost: 40, requires: [],
+    gate: () => true,
+    flavor: (h) => `its loyalty to ${h.realm} reads ${(h.allegiance || 0).toFixed(2)}`,
+    eff: (h) => ((h.allegiance || 0) >= 0.8 ? { mul: { coin: 1.1 } } : (h.allegiance || 0) >= 0.4 ? { def: 1 } : { mul: { salt: 1.1, timber: 1.05 } }) },
+  { id: 'lakes', cat: 'lore', name: 'Lakes Named', tier: 2, cost: 90, requires: ['realmage'],
+    gate: (h) => !!nearFeat(h, 'lake'),
+    flavor: (h) => `the lake ${nearFeat(h, 'lake').name} lies close`,
+    eff: { pop: 1 } },
+  { id: 'oldroad', cat: 'lore', name: 'The Old Road Over', tier: 3, cost: 160, requires: ['realmage'],
+    gate: (h) => !!nearFeat(h, 'pass'),
+    flavor: (h) => `the pass ${nearFeat(h, 'pass').name} crosses the ridge nearby`,
+    eff: { mul: { coin: 1.12 } } },
+  { id: 'oldfire', cat: 'lore', name: 'The Old Fire', tier: 3, cost: 160, requires: ['bedrock'],
+    gate: (h) => !!nearFeat(h, 'volcano'),
+    flavor: (h) => `the vent ${nearFeat(h, 'volcano').name} weathered rich soil nearby`,
+    eff: { mul: { food: 1.06, ore: 1.04 } } },
+  { id: 'dragonlairs', cat: 'lore', name: 'Dragon Lairs Marked', tier: 3, cost: 160, requires: ['realmage'],
+    gate: (h) => !!nearFeat(h, 'den', 'nest', 'rookery'),
+    flavor: (h) => { const f = nearFeat(h, 'den', 'nest', 'rookery'); return `the ${f.kind} ${f.name} is charted ${f.dist} off`; },
+    eff: { def: 1 } },
+];
+const RESEARCH_BY_ID = Object.fromEntries(RESEARCH.map((d) => [d.id, d]));
 
 // STORE — localStorage when it's reachable, else an in-memory fallback.
 // A sandboxed file: origin (e.g. a flatpak browser's document portal) can
@@ -201,6 +305,14 @@ class Game {
     // no res[] entry, no cap — so pre-faith saves just start at 0.
     this.faith = this.faith || 0;
     this.faithReady = false; // set true by stepFaith() when faith crosses threshold
+    // Research: insight accrued from scholars + the discoveries already made
+    // (ids into RESEARCH). Pre-research saves start empty. seatData/discoveryTally
+    // are derived/transient — recomputed on load, never serialized.
+    this.research = this.research || { insight: 0, done: [] };
+    if (!Array.isArray(this.research.done)) this.research.done = [];
+    this.research.insight = this.research.insight || 0;
+    this.seatData = researchSeatData(this.h);
+    this.discoveryTally = 0; // town.js mirrors new discoveries to the chronicle, like raids/spoilage
     // Farm fields: each is an individual plot with a size (grown by expansion)
     // and a crop. Seeded from the farm level so old saves migrate cleanly.
     this.farmPlots = this.farmPlots || [];
@@ -425,6 +537,7 @@ class Game {
     let cap = 8 + this.bon.popCapBonus;
     cap += this.level('longhouse') * BY_ID.longhouse.pop;
     cap += this.keepPop();
+    cap += this.researchPop();
     return cap;
   }
 
@@ -437,10 +550,12 @@ class Game {
     if (lh > 0) contributors.push({ id: 'longhouse', name: BY_ID.longhouse.name, count: lh, add: lh * BY_ID.longhouse.pop });
     const kp = this.keepPop();
     if (kp > 0) contributors.push({ id: 'keep', name: 'The Keep', count: this.level('keep'), add: kp });
+    const rp = this.researchPop();
+    if (rp > 0) contributors.push({ id: 'research', name: 'Discoveries', count: this.doneDiscoveries().filter((d) => this.effOf(d).pop).length, add: rp });
     return { base, contributors, total: this.popCap() };
   }
 
-  defense() { return this.level('palisade') * BY_ID.palisade.def + this.level('barracks') * BY_ID.barracks.def + this.bon.defBonus + this.keepDef(); }
+  defense() { return this.level('palisade') * BY_ID.palisade.def + this.level('barracks') * BY_ID.barracks.def + this.bon.defBonus + this.keepDef() + this.researchDef(); }
 
   // keepDef/keepPop — the keep's functional worth, all ABOVE its founding
   // level 1 (so a level-1 keep leaves the old balance exactly): each level
@@ -457,6 +572,48 @@ class Game {
   // but its speakers also fill it faster, so more reliquaries still means
   // the god is heard from more often, not less.
   faithThreshold() { return CFG.faithBase + this.speakers() * CFG.faithPerSpeakerThresh; }
+
+  // ---- research ------------------------------------------------------
+  // scholars — voices studying the land: one always (the lord's own study),
+  // +2 per Scholars' Hall level. Insight accrues from them (stepResearch).
+  researchers() { return 1 + this.level('scholarshall') * 2; }
+  doneDiscoveries() { return this.research.done.map((id) => RESEARCH_BY_ID[id]).filter(Boolean); }
+  effOf(d) { return typeof d.eff === 'function' ? d.eff(this.h, this.seatData) : (d.eff || {}); }
+  // Live bonus reads — the sum/product of every made discovery's effect, read
+  // fresh each call (never baked into `bon`, so a bon rebuild can't drop them).
+  researchMul(res) { let m = 1; for (const d of this.doneDiscoveries()) { const e = this.effOf(d); if (e.mul && e.mul[res]) m *= e.mul[res]; } return m; }
+  researchDef() { let s = 0; for (const d of this.doneDiscoveries()) s += this.effOf(d).def || 0; return s; }
+  researchPop() { let s = 0; for (const d of this.doneDiscoveries()) s += this.effOf(d).pop || 0; return s; }
+  researchFoodEatMul() { let m = 1; for (const d of this.doneDiscoveries()) { const f = this.effOf(d).foodEat; if (f) m *= f; } return m; }
+  researchSpoilMul() { let m = 1; for (const d of this.doneDiscoveries()) { const f = this.effOf(d).spoilMul; if (f) m *= f; } return m; }
+  researchPreserveAdd() { let s = 0; for (const d of this.doneDiscoveries()) s += this.effOf(d).preserveAdd || 0; return s; }
+
+  // researchEligible — the discoveries this hold can make next: not yet done,
+  // prerequisites met, and the seed-42 ground actually supports them (gate).
+  researchEligible() {
+    const done = this.research.done;
+    return RESEARCH.filter((d) => !done.includes(d.id) && d.requires.every((r) => done.includes(r)) && d.gate(this.h, this.seatData));
+  }
+  researchNext() { const e = this.researchEligible(); return e.length ? e.sort((a, b) => a.cost - b.cost || a.tier - b.tier)[0] : null; }
+  // stepResearch accrues insight and auto-makes the cheapest eligible discovery
+  // when it's covered — the same shape as faith crossing its threshold. Insight
+  // freezes when nothing is left to learn here (all reachable gates exhausted).
+  stepResearch(dt) {
+    if (!this.researchNext()) return;              // nothing eligible — don't pile up insight
+    this.research.insight += this.researchers() * CFG.insightPerScholar * dt;
+    let guard = 0;
+    while (guard++ < RESEARCH.length) {
+      const next = this.researchNext();
+      if (!next || this.research.insight < next.cost) break;
+      this.research.insight -= next.cost;
+      this.researchUnlock(next);
+    }
+  }
+  researchUnlock(d) {
+    this.research.done.push(d.id);
+    this.discoveryTally = (this.discoveryTally || 0) + 1;
+    this.pushLog(`Discovered: ${d.name} — ${d.flavor(this.h, this.seatData)}.`, 'discovery');
+  }
 
   // capBreakdown(k) — the cap math behind caps(), broken out per contributing
   // storage building so hovers can show *why* a resource caps where it does.
@@ -494,7 +651,7 @@ class Game {
   rates(offline = false) {
     const eff = this.efficiency();
     const out = { grain: 0, roots: 0, greens: 0, fruit: 0, fish: 0, timber: 0, stone: 0, ore: 0, salt: 0, coin: 0 };
-    const fMul = this.bon.mul.food, fertile = 0.35 + 0.65 * (this.h.rich.food || 0);
+    const fMul = this.bon.mul.food * this.researchMul('food'), fertile = 0.35 + 0.65 * (this.h.rich.food || 0);
     const warmth = this.warmthNow(offline);          // crops grow to the season's warmth, not just the baseline
     for (const p of this.farmPlots) {
       const crop = CROP_BY_ID[p.crop];
@@ -508,12 +665,12 @@ class Game {
       if (b.kind !== 'prod' || b.id === 'farm' || b.id === 'wharf') continue;
       const lv = this.level(b.id);
       if (!lv) continue;
-      out[b.res] += b.base * lv * (0.35 + 0.65 * this.richOf(b)) * eff * this.bon.mul[b.res];
+      out[b.res] += b.base * lv * (0.35 + 0.65 * this.richOf(b)) * eff * this.bon.mul[b.res] * this.researchMul(b.res);
     }
     return out;
   }
 
-  foodEatPerS() { return this.pop * CFG.foodPerPop * this.bon.foodEat; }
+  foodEatPerS() { return this.pop * CFG.foodPerPop * this.bon.foodEat * this.researchFoodEatMul(); }
 
   // ---- food spoilage -------------------------------------------------
   // daylight: the same 0..1 curve town.js paints the night overlay from (noon=1,
@@ -577,15 +734,18 @@ class Game {
     const gate = 0.2 + 0.8 * warmth;                 // climate susceptibility (frigid → hot)
     const exposure = 0.5 + 0.3 * sun + 0.2 * ground; // sheltered-night 0.5 → open-noon 1.0
     const sev = Math.min(1, gate * exposure);        // shared across categories
+    const spoilMax = CFG.foodSpoilMax * this.researchSpoilMul(); // cold-cellar discoveries slow the turn
     const gross = {}; let grossTot = 0;
     for (const c of FOOD_CATS) {
       const f = this.res[c] || 0; if (f <= 0) continue;
-      const g = f * CFG.foodSpoilMax * sev * FOOD[c].spoil * dt;
+      const g = f * spoilMax * sev * FOOD[c].spoil * dt;
       if (g > 0) { gross[c] = g; grossTot += g; }
     }
     if (grossTot <= 0) return 0;
-    // salt preserves the SAME fraction of every category's loss (cap + stock bound)
-    const preserveFrac = Math.min(CFG.saltPreserveMax, ((this.res.salt || 0) / CFG.saltPerFood) / grossTot);
+    // salt preserves the SAME fraction of every category's loss (cap + stock bound);
+    // salt-craft discoveries lift the ceiling a little (researchPreserveAdd).
+    const preserveCap = Math.min(0.98, CFG.saltPreserveMax + this.researchPreserveAdd());
+    const preserveFrac = Math.min(preserveCap, ((this.res.salt || 0) / CFG.saltPerFood) / grossTot);
     const saltSpent = grossTot * preserveFrac * CFG.saltPerFood;
     if (saltSpent > 0) this.res.salt = Math.max(0, this.res.salt - saltSpent);
     let spoiledTot = 0;
@@ -668,6 +828,7 @@ class Game {
     }
     this.stepRaids(dt, offline);
     this.stepFaith(dt);
+    this.stepResearch(dt);
   }
 
   // stepFaith accumulates faith from the hold's speakers; crossing the
@@ -752,7 +913,7 @@ class Game {
 
   // ---- persistence ---------------------------------------------------
   serialize() {
-    return { res: this.res, pop: this.pop, instances: this.instances, farmPlots: this.farmPlots, faith: this.faith, founded: this.founded, log: this.log, raidClock: this.raidClock, lastTick: this.lastTick };
+    return { res: this.res, pop: this.pop, instances: this.instances, farmPlots: this.farmPlots, faith: this.faith, research: this.research, founded: this.founded, log: this.log, raidClock: this.raidClock, lastTick: this.lastTick };
   }
   save() { STORE.set('xanhold:' + this.h.id, JSON.stringify(this.serialize())); }
   static load(hold) {
@@ -763,5 +924,5 @@ class Game {
   static abandon(id) { STORE.del('xanhold:' + id); }
 }
 
-window.XANGAME = { Game, BUILDINGS, BY_ID, CFG, FOOD, FOOD_CATS, CROPS, CROP_BY_ID, cropSuit };
+window.XANGAME = { Game, BUILDINGS, BY_ID, CFG, FOOD, FOOD_CATS, CROPS, CROP_BY_ID, cropSuit, RESEARCH, RESEARCH_BY_ID };
 })();

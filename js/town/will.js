@@ -6,6 +6,7 @@ import { ORDER } from './constants.js';
 import { fortSpans, troopCap } from './walls.js';
 import { pushOrder } from './orders.js';
 import { renderOrders, renderWillPanel, renderWillDetail, setStewardLine, pushChronicle } from './hud.js';
+import { researchState } from './research.js';
 
 const { BUILDINGS } = window.XANGAME;
 
@@ -123,6 +124,7 @@ export function stewardState(occasion, instruction) {
     rich: Object.fromEntries(Object.entries(h.rich).map(([k, v]) => [k, +v.toFixed(2)])),
     climate: { band: h.tempBand, warmth: +(h.warmth || 0).toFixed(2) },
     crops: g.farmPlots.reduce((m, p) => { m[p.crop] = (m[p.crop] || 0) + 1; return m; }, {}),
+    research: researchState(),  // what the hold has learned of its own land — bound the god's voice to it
     defenses: defenseState(),
     recentChronicle: S.chronicle.slice(0, 3).map((c) => c.text),
   };
