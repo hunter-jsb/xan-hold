@@ -101,11 +101,12 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); }
 .sp-utt { font-family: var(--serif); font-size: 14px; color: #ffdc7a;
   text-shadow: 0 0 8px rgba(255,190,70,.3); margin-bottom: 6px;
   padding-bottom: 6px; border-bottom: 1px solid var(--frame-soft); }
+.sp-list { display: flex; flex-direction: column; }
 .sp-block { padding: 4px 0; }
 .sp-block + .sp-block { border-top: 1px solid var(--divider); }
 .sp-head { font-size: 12px; line-height: 1.35; }
 .sp-name { font-family: var(--serif); color: var(--gold); letter-spacing: .02em; }
-.sp-directive { color: var(--dim); }
+.sp-directive { color: var(--dim); margin: 2px 0 5px; } /* shared by compact + wd-inv (span vs div — see hud.js) */
 .sp-orders { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
 .ordchip { font-size: 11px; background: rgba(255,212,121,.12);
   border: 1px solid var(--frame); border-radius: 10px; padding: 1px 7px;
@@ -113,10 +114,14 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); }
 /* slim town-event log, folded into the same panel (raids, notes) */
 .will-log { margin-top: 7px; padding-top: 6px; display: flex; flex-direction: column; gap: 2px;
   border-top: 1px solid var(--divider); }
+.will-log-t { font-size: 10px; color: var(--dim); text-transform: uppercase;
+  letter-spacing: .07em; margin-bottom: 4px; } /* section label above the events strip */
 .cl { font-size: 12px; line-height: 1.35; opacity: .92; }
 .cl.raid { color: var(--bad); }
 .cl.note { color: var(--dim); }
 .cl.discovery { color: var(--gold); }
+.cl.spoil { color: var(--warn); }
+.cl.plague { color: #9fbf6a; } /* sickly green — distinct from raid's red/spoil's amber */
 .will-status { font-size: 11px; color: var(--dim); margin-top: 6px; min-height: 13px; }
 
 /* order log entries */
@@ -161,13 +166,24 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); }
 #region-l .panel.clickable:hover::after { opacity: .85; }
 
 /* Will popout detail (renderWillDetail) — every kept invocation, unabridged
-   (parish + full word + all order chips), then the whole chronicle. Reuses
-   sp-*/ordchip/cl from the compact panel so the two views stay visually one
-   family; wd-* below is just the extra structure the compact view trims. */
+   (parish + full word + all order chips), then the WHOLE S.game.log, filterable
+   by kind. Reuses sp-*/ordchip/cl from the compact panel so the two views stay
+   visually one family; wd-* below is just the extra structure the compact view trims. */
 .wd-inv + .wd-inv { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--frame-soft); }
 .wd-time { font-size: 10px; margin-bottom: 3px; }
 .wd-word { color: var(--dim); font-style: italic; margin: 3px 0 5px; padding-left: 1px; }
 .wd-chron-t { font-family: var(--serif); color: var(--gold); font-size: 13px; margin-top: 10px; }
+.wd-full-log { margin-top: 2px; } /* chips above already carry the gap — don't double it */
+
+/* full-log filter chips (the popout's kind filter row) — active state mirrors
+   .chip.pinned's inset-glow affordance from the resource chips. */
+.log-filters { display: flex; flex-wrap: wrap; gap: 5px; margin: 6px 0 8px; }
+.lf-chip { font-size: 11px; padding: 3px 9px; border-radius: 10px; cursor: pointer;
+  background: var(--overlay); border: 1px solid var(--frame-soft); color: var(--dim);
+  white-space: nowrap; transition: background .15s, color .15s; }
+.lf-chip:hover { background: var(--overlay-strong); color: var(--ink); }
+.lf-chip.active { background: var(--overlay-strong); color: var(--gold);
+  box-shadow: inset 0 0 0 1px rgba(255,212,121,.55); }
 
 /* legend rows with counts */
 .lg { display: flex; align-items: center; gap: 8px; padding: 2px 0; }

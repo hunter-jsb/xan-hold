@@ -51,5 +51,6 @@ export function makePopout({ title }) {
     setTitle: (s) => { t.textContent = s; },
     setContent: (html) => { b.innerHTML = html; },
     isOpen,
+    body: b, // exposes the scrolling body node so callers can delegate clicks (e.g. filter chips)
   };
 }

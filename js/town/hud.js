@@ -53,6 +53,14 @@ export function initHUD(away) {
   S.ui.speakers.el.classList.add('clickable');
   S.ui.speakers.el.addEventListener('click', openWillDetail);
   S.ui.willPopout = makePopout({ title: willPopoutTitle() });
+  // Filter chips live inside the popout body and get rebuilt with it on every
+  // open/re-render, so one delegated listener (attached once) is enough.
+  S.ui.willPopout.body.addEventListener('click', (e) => {
+    const chip = e.target.closest && e.target.closest('.lf-chip');
+    if (!chip) return;
+    S.ui.logFilter = chip.dataset.filter;
+    S.ui.willPopout.setContent(renderWillDetail());
+  });
   renderWillPanel();
   updateHUD();
   initResTip();
@@ -303,25 +311,56 @@ export function renderWillPanel() {
   const utt = lw && lw.utterance
     ? `<div class="sp-utt">${icon('faith', 'sm')} ${lw.utterance}</div>` : '';
   const speakers = (lw && lw.speakers && lw.speakers.length)
-    ? lw.speakers.map((sp) => `
+    ? `<div class="sp-list">${lw.speakers.map((sp) => `
       <div class="sp-block">
-        <div class="sp-head"><span class="sp-name">${sp.name || 'a speaker'}</span> <span class="sp-directive">· “${sp.directive || ''}”</span></div>
+        <div class="sp-head"><span class="sp-name">${sp.name || 'a speaker'}</span></div>
+        <div class="sp-directive">“${sp.directive || ''}”</div>
         <div class="sp-orders">${sp.orders.length
           ? sp.orders.map((o) => `<span class="ordchip">${orderIcon(o)} ${orderText(o)}</span>`).join('')
           : '<span class="dim">no work bidden</span>'}</div>
-      </div>`).join('')
+      </div>`).join('')}</div>`
     : '<div class="dim">The speakers await a word.</div>';
   const events = (S.chronicle || []).slice(0, 4).map((c) => `<div class="cl ${c.kind}">${c.text}</div>`).join('');
-  const log = events ? `<div class="will-log">${events}</div>` : '';
+  const log = events ? `<div class="will-log"><div class="will-log-t">Recent</div>${events}</div>` : '';
   const status = S.willStatus ? `<div class="will-status">${S.willStatus}</div>` : '';
   S.ui.speakers.set(utt + speakers + log + status);
 }
 
 const willPopoutTitle = () => `${S.mask.aspect || 'the Will'} — the god's doings`;
 
+// LOG_KINDS: the popout's filter chips over S.game.log's kinds — glyphs match
+// the chronicle's own kind coloring (.cl.* in town.css). 'all' has neither.
+const LOG_KINDS = [
+  { key: 'all', label: 'All' },
+  { key: 'raid', label: 'Raids', glyph: '⚔' },
+  { key: 'spoil', label: 'Spoilage', glyph: '🥀' },
+  { key: 'discovery', label: 'Discoveries', glyph: '📖' },
+  { key: 'plague', label: 'Sickness', glyph: '🤢' },
+  { key: 'note', label: 'Notes', glyph: '📜' },
+];
+const KIND_GLYPH = Object.fromEntries(LOG_KINDS.filter((k) => k.glyph).map((k) => [k.key, k.glyph]));
+
+// logFilterChips — active filter lives in S.ui.logFilter, a module/session
+// value (not per-render) since the popout's html is fully rebuilt each open.
+function logFilterChips() {
+  const active = S.ui.logFilter || 'all';
+  return `<div class="log-filters">${LOG_KINDS.map((k) =>
+    `<span class="lf-chip${k.key === active ? ' active' : ''}" data-filter="${k.key}">${k.glyph ? k.glyph + ' ' : ''}${k.label}</span>`
+  ).join('')}</div>`;
+}
+
+// fullLogHTML — S.game.log (every kind the sim keeps, cap 40, newest first),
+// narrowed to the active chip.
+function fullLogHTML() {
+  const active = S.ui.logFilter || 'all';
+  const lines = (S.game.log || []).filter((l) => active === 'all' || l.kind === active);
+  if (!lines.length) return '<div class="dim">Nothing of that kind, yet.</div>';
+  return lines.map((l) => `<div class="cl ${l.kind}">${KIND_GLYPH[l.kind] ? KIND_GLYPH[l.kind] + ' ' : ''}${l.text}</div>`).join('');
+}
+
 // openWillDetail — the left panel's click target. Rebuilds the popout's
 // content fresh every time it opens (per the "live-ish" contract: a stale
-// render would show doings that no longer match S.willHistory/chronicle).
+// render would show doings that no longer match S.willHistory/S.game.log).
 export function openWillDetail() {
   if (!S.ui.willPopout) return;
   S.ui.willPopout.setTitle(willPopoutTitle());
@@ -331,8 +370,9 @@ export function openWillDetail() {
 // renderWillDetail — the popout's full accounting: every kept invocation
 // (S.willHistory, newest first), each with the FULL speaker breakdown the
 // compact panel trims (parish, the heard directive, the interpretation
-// 'word', and every order chip — not just a few), then the WHOLE running
-// chronicle (not the compact panel's last-4 slice). Long enough to scroll.
+// 'word', and every order chip — not just a few), then the WHOLE S.game.log
+// (every kind, not the compact panel's last-4 chronicle slice), filterable
+// by kind via logFilterChips(). Long enough to scroll.
 export function renderWillDetail() {
   const hist = S.willHistory.length ? S.willHistory
     : (S.lastWill ? [{ ...S.lastWill, at: Date.now() }] : []);
@@ -350,10 +390,7 @@ export function renderWillDetail() {
             : '<span class="dim">no work bidden</span>'}</div>
         </div>`).join('') : '<div class="dim">The speakers kept silence.</div>'}
     </div>`).join('') : '<div class="dim">The Will has not yet spoken.</div>';
-  const chron = S.chronicle.length
-    ? S.chronicle.map((c) => `<div class="cl ${c.kind}">${c.text}</div>`).join('')
-    : '<div class="dim">Nothing chronicled yet.</div>';
-  return `${invs}<div class="wd-chron-t">The Chronicle</div><div class="will-log">${chron}</div>`;
+  return `${invs}<div class="wd-chron-t">The Chronicle</div>${logFilterChips()}<div class="will-log wd-full-log">${fullLogHTML()}</div>`;
 }
 
 export function pushChronicle(text, kind) {

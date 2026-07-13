@@ -33,7 +33,7 @@ own commit so anything can be rolled back.
 | F7 | sectioned walls + wall levels | walls.js, orders.js, state.js | ✅ |
 | F8 | people fight raids; pathing affects clash | villagers.js, game.js, walls.js | ☐ |
 | F9 | speaker fealty (pop→speaker, head-speaker worker distro) | villagers.js, orders.js, will.js, serve.mjs | ☐ |
-| F10 | speaker UI cleanup + filterable log popout | hud.js, ui.js, town.css | ☐ |
+| F10 | speaker UI cleanup + filterable log popout | hud.js, ui.js, town.css | ✅ |
 | F11 | building relocation as a build action (wall-aware) | buildings.js, orders.js, town.js | ☐ |
 
 ## World-sim data available for F6 (Research) — `data/world.js` window.WORLD
@@ -46,6 +46,14 @@ the REAL local rock/rockAge (geology), salt/salinity (deposits), drainage/river,
 elevation, nearby named features, and realm history. Nothing is invented.
 
 ## Log
+- 2026-07-13: **F10 done** (delegated to a Sonnet subagent, reviewed by me). The
+  Will story-popout now surfaces the FULL authoritative log (S.game.log, every
+  kind) with a row of filter chips — All / Raids / Spoilage / Discoveries /
+  Sickness / Notes — that narrow it in place (state in S.ui.logFilter, one
+  delegated listener on the popout body, re-render via setContent). The compact
+  left Will panel was tidied (per-speaker blocks, a "Recent" label). ui.js
+  makePopout now exposes its body node; town.css got the filter-chip + .cl.spoil/
+  .cl.plague styles. Ran concurrently with F7 on disjoint files. Verifier clean.
 - 2026-07-13: **F7 done** — walls now ring named SECTIONS (core / farmland /
   town), not just the core, and each walled section has a TIER = its level:
   fence(1) → wood(2) → stone(3). planSectionWall cycles a section's four sides
