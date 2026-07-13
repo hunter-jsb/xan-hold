@@ -258,7 +258,7 @@ export function renderWalls() {
   if (towerTex) for (const key of S.towers) {
     const [tx, ty] = key.split(',').map(Number);
     const s = new Sprite(towerTex); s.anchor.set(0.5, 1);
-    s.scale.set(2.6 * TILE / towerTex.width);
+    s.scale.set(2.0 * TILE / towerTex.width);   // ~2 tiles wide (was 2.6 — a touch smaller)
     s.x = tx * TILE + TILE / 2; s.y = (ty + 1) * TILE; s.zIndex = (ty + 1) * TILE;
     S.entities.addChild(s); S.towerSprites.push(s);
   }
