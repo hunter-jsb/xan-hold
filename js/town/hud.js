@@ -274,9 +274,10 @@ export function orderText(o) {
   if (o.type === ORDER.WALL) return o.from && o.to ? `raise a wall${o.gate ? ' + gate' : ''}` : 'open a gate';
   if (o.type === ORDER.TRADE) return `${o.action} ${o.qty || ''} ${o.resource}`.replace(/\s+/g, ' ').trim();
   if (o.type === ORDER.FOCUS) return `focus ${o.value || o.target}`;
+  if (o.type === ORDER.MOVE) { const t = o.target.slice(0, o.target.indexOf('#')); return `relocate ${BUILD_NAME[t] || t}`; }
   return o.type;
 }
-const orderIcon = (o) => o.type === ORDER.BUILD ? '🔨' : o.type === ORDER.WALL ? '🧱' : o.type === ORDER.EXPAND ? '🌱' : o.type === ORDER.TRADE ? (o.action === TRADE_ACT.SELL ? '💰' : '🛒') : '🎯';
+const orderIcon = (o) => o.type === ORDER.BUILD ? '🔨' : o.type === ORDER.WALL ? '🧱' : o.type === ORDER.EXPAND ? '🌱' : o.type === ORDER.MOVE ? '🚚' : o.type === ORDER.TRADE ? (o.action === TRADE_ACT.SELL ? '💰' : '🛒') : '🎯';
 
 export function orderEntryHTML(o) {
   const t = `${orderIcon(o)} ${orderText(o)}`;

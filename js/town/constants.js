@@ -45,12 +45,12 @@ export const ROLE_LABEL = {
 };
 
 // ---- orders ----------------------------------------------------------
-export const ORDER = { BUILD: 'build', WALL: 'wall', TRADE: 'trade', FOCUS: 'focus', EXPAND: 'expand' };
+export const ORDER = { BUILD: 'build', WALL: 'wall', TRADE: 'trade', FOCUS: 'focus', EXPAND: 'expand', MOVE: 'move' };
 export const TRADE_ACT = { BUY: 'buy', SELL: 'sell' };
 // Seconds of work one unit of each order takes — decrees are carried out over
 // time, not the instant they land. ORDER.BUILD no longer reads its entry (a real
 // building takes as long as its construction SITE); kept for farm/palisade.
-export const WORK_S = { [ORDER.BUILD]: 5, [ORDER.TRADE]: 2.5, [ORDER.FOCUS]: 1, [ORDER.EXPAND]: 5, [ORDER.WALL]: 5 };
+export const WORK_S = { [ORDER.BUILD]: 5, [ORDER.TRADE]: 2.5, [ORDER.FOCUS]: 1, [ORDER.EXPAND]: 5, [ORDER.WALL]: 5, [ORDER.MOVE]: 4 };
 
 // ---- focuses (a speaker/steward priority that isn't a building id) ---
 export const FOCUS = { FOOD: 'food', DEFENSE: 'defense' };

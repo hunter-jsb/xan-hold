@@ -34,7 +34,7 @@ own commit so anything can be rolled back.
 | F8 | people fight raids; pathing affects clash | villagers.js, game.js, town.js, raids.js, state.js | ✅ |
 | F9 | speaker fealty (pop→speaker, head-speaker worker distro) | villagers.js, orders.js, will.js, serve.mjs | ☐ |
 | F10 | speaker UI cleanup + filterable log popout | hud.js, ui.js, town.css | ✅ |
-| F11 | building relocation as a build action (wall-aware) | buildings.js, orders.js, town.js | ☐ |
+| F11 | building relocation as a build action (wall-aware) | buildings.js, orders.js, constants.js, hud.js | ✅ |
 
 ## World-sim data available for F6 (Research) — `data/world.js` window.WORLD
 120×50 grids (row-major, idx = y*120+x): `region elev temp drainage rock rockAge
@@ -46,6 +46,15 @@ the REAL local rock/rockAge (geology), salt/salinity (deposits), drainage/river,
 elevation, nearby named features, and realm history. Nothing is invented.
 
 ## Log
+- 2026-07-13: **F11 done** (delegated to a Sonnet subagent, reviewed by me).
+  Building relocation as a MOVE order: relocateBuilding(key, dest) repositions a
+  placed building, swaps its plot record, patches its hittable box (by key),
+  frees the old plot + claims the new. Only RELOCATABLE types (core buildings +
+  sawmill/quarry/saltern; farms/keep/mine/wharf excluded). pickRelocateDest reuses
+  the build allocators + screens each candidate's footprint against S.walls/gates
+  (wall-aware), releasing rejected claims. The steward redistricts: it moves a
+  CORE building stranded outside a shrunken core zone back inside (can't thrash).
+  Free (labor, not construction); shown as 🚚 in the log. Verifier clean.
 - 2026-07-13: **F8 done** — raids are now FOUGHT by the folk, and pathing decides
   the clash. game.js stepRaids splits: offline stays one abstract loss
   (applyRaidLoss, extracted); a LIVE raid sets S.game.raidWave, and town.js

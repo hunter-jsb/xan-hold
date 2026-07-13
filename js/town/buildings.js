@@ -69,7 +69,7 @@ export function recipeFor(type) {
 // terrain-biased non-self-siting works (nextOuterPlot; sawmill/quarry/
 // saltern), and the farmland district that clusters fields instead of
 // scattering them (nextFarmPlot/farmlandAnchor — the sprawl fix).
-const CORE_TYPES = new Set(['longhouse', 'granary', 'reliquary', 'market', 'barracks', 'scholarshall']);
+export const CORE_TYPES = new Set(['longhouse', 'granary', 'reliquary', 'market', 'barracks', 'scholarshall']);
 const OUTER_TYPES = new Set(['farm', 'wharf', 'mine', 'sawmill', 'quarry', 'saltern']);
 const CORE_R0 = 2, CORE_GROW_EVERY = 3, CORE_R_MAX = 6; // plot-units (×PLOT tiles) — see coreRadius
 
@@ -412,6 +412,74 @@ export function allocatePlot(type, recipe) {
   const plot = nextCorePlot();
   if (!plot) return null;
   return { plot, cx: plot.tx * TILE + Math.floor((PLOT - recipe.w) / 2) * TILE, cy: (plot.ty + PLOT - recipe.h) * TILE };
+}
+
+// ---- relocation (redistricting) ---------------------------------------
+// RELOCATABLE — building types a MOVE order may actually relocate: the
+// walled-core dwellings/stores/faith/command, plus the non-self-siting outer
+// works. Farms (a district render) and the keep (fixed at centre) are
+// excluded, same as mines/wharfs (self-sited on a vein/shore, not a plot).
+const RELOCATABLE = new Set([...CORE_TYPES, 'sawmill', 'quarry', 'saltern']);
+
+// plotBuildPos — a plot's actual build position in pixels for `recipe`, the
+// same formula allocatePlot uses for CORE_TYPES and OUTER_TYPES alike.
+function plotBuildPos(plot, recipe) {
+  return { cx: plot.tx * TILE + Math.floor((PLOT - recipe.w) / 2) * TILE, cy: (plot.ty + PLOT - recipe.h) * TILE };
+}
+
+// destBlocked — is `plot`'s footprint (for `recipe`) crossed by a wall/gate
+// tile? nextCorePlot/nextOuterPlot already dodge used/ore/water plots, but
+// not the finer-grained wall tile set — a relocation dest needs this too.
+function destBlocked(plot, recipe) {
+  const { cx, cy } = plotBuildPos(plot, recipe);
+  const tx0 = cx / TILE, ty0 = cy / TILE;
+  for (let y = 0; y < recipe.h; y++) for (let x = 0; x < recipe.w; x++) {
+    if (S.walls.has(`${tx0 + x},${ty0 + y}`) || S.gates.has(`${tx0 + x},${ty0 + y}`)) return true;
+  }
+  return false;
+}
+
+// pickRelocateDest finds a wall-clear dest for relocateBuilding: retries the
+// same allocator the build path uses (nextCorePlot/nextOuterPlot) past any
+// candidate a wall/gate crosses. Rejected candidates are released back to
+// S.usedPlots; the winner (if any) stays claimed for relocateBuilding to use.
+export function pickRelocateDest(type, recipe) {
+  const isOuter = OUTER_TYPES.has(type);
+  const tried = [];
+  let dest = null;
+  for (let i = 0; i < 24; i++) {
+    const bias = isOuter ? outerBias(type) : null;
+    const plot = isOuter ? nextOuterPlot(bias && bias.x, bias && bias.y) : nextCorePlot();
+    if (!plot) break;
+    tried.push(plot);
+    if (!destBlocked(plot, recipe)) { dest = plot; break; }
+  }
+  for (const p of tried) if (p !== dest) S.usedPlots.delete(`${p.px},${p.py}`);
+  return dest;
+}
+
+// relocateBuilding moves already-placed building `key` onto plot `dest`
+// (from pickRelocateDest): repositions its sprite, swaps its S.placed plot
+// record, patches its S.hittable box in place, and frees the old plot /
+// claims the new one. False (no-op) if `key` isn't a relocatable, finished
+// building, or `dest` isn't usable.
+export function relocateBuilding(key, dest) {
+  const type = key.slice(0, key.indexOf('#'));
+  if (!RELOCATABLE.has(type) || S.siteKeys.has(key)) return false; // not a plot building, or still under construction
+  const rec = S.placed.get(key);
+  if (!rec || !rec.container || !dest) return false;
+  const { recipe } = recipeFor(type);
+  if (destBlocked(dest, recipe)) return false; // pickRelocateDest should've screened this — stay safe if called directly
+  const { cx, cy } = plotBuildPos(dest, recipe);
+  const old = rec.plot;
+  if (old && old.px != null) S.usedPlots.delete(`${old.px},${old.py}`);
+  S.usedPlots.add(`${dest.px},${dest.py}`);
+  rec.container.x = cx; rec.container.y = cy; rec.container.zIndex = cy + recipe.h * TILE;
+  rec.plot = dest;
+  const hit = S.hittable.find((h) => h.key === key);
+  if (hit) { hit.x0 = cx / TILE; hit.y0 = cy / TILE; hit.x1 = cx / TILE + recipe.w; hit.y1 = cy / TILE + recipe.h; }
+  constructionPoof(cx + recipe.w * TILE / 2, cy + recipe.h * TILE);
+  return true;
 }
 
 // Reconcile placed structures toward the desired counts (grow the town).

@@ -3,7 +3,7 @@
 // effect lands (a site raised, a wall laid, a trade made, a focus set).
 import { S, isRaided } from './state.js';
 import { ORDER, WORK_S, MAX_ACTIVE, MAX_PER_TYPE, FOCUS, TRADE_ACT, CENTER_TX, CENTER_TY, PLOT, TOWN_W, TOWN_H } from './constants.js';
-import { startSite, startFarmSite, nextFarmPlot, wantsNewFarmField, farmFieldAvailable, mineNodeAvailable, coreRadius } from './buildings.js';
+import { startSite, startFarmSite, nextFarmPlot, wantsNewFarmField, farmFieldAvailable, mineNodeAvailable, coreRadius, plotInCore, CORE_TYPES, recipeFor, pickRelocateDest, relocateBuilding } from './buildings.js';
 import { wharfSiteAvailable } from './terrain.js';
 import { layWallSegment, layGate, placeTower, TIER_KIND } from './walls.js';
 
@@ -155,6 +155,18 @@ export function advanceOrder(a, dt) {
         if (a.waited > 16) { a.status = 'skipped'; a.doneAt = Date.now(); }
         return;
       }
+    }
+  } else if (a.type === ORDER.MOVE) {
+    // Redistricting: relocate an already-placed building onto a wall-clear
+    // dest from the same allocator the build path uses (see
+    // pickRelocateDest/relocateBuilding). No cost — just labor.
+    const type = a.target.slice(0, a.target.indexOf('#'));
+    const { recipe } = recipeFor(type);
+    const dest = pickRelocateDest(type, recipe);
+    if (dest && relocateBuilding(a.target, dest)) { a.qtyLeft = 0; }
+    else {
+      if (dest) S.usedPlots.delete(`${dest.px},${dest.py}`); // picked but unused — release the claim
+      a.status = 'skipped'; a.doneAt = Date.now(); return;
     }
   }
   if (a.qtyLeft <= 0) { a.status = 'done'; a.doneAt = Date.now(); }
@@ -345,6 +357,18 @@ export function localSteward() {
   // folk and stiffens its defense + muster (a per-instance upgrade of the keep).
   if (g.pop > 12 && g.canUpgradeAny('keep') && Math.random() < 0.12) {
     pushOrder({ type: ORDER.EXPAND, target: 'keep', qty: 1 }); return;
+  }
+  // Redistricting: a CORE building stranded outside the current core zone
+  // (coreRadius can shrink as a later wharf claims water plots closer to
+  // town — see maxSafeCoreRadius) — move it back onto a free core plot.
+  // Only fires when a genuinely-stranded building exists, so it never thrashes.
+  if (g.pop > 6 && Math.random() < 0.08) {
+    for (const [key, rec] of S.placed) {
+      const type = key.slice(0, key.indexOf('#'));
+      if (!CORE_TYPES.has(type) || S.siteKeys.has(key)) continue;
+      if (!rec.plot || rec.plot.px == null || plotInCore(rec.plot.px, rec.plot.py)) continue;
+      pushOrder({ type: ORDER.MOVE, target: key }); return;
+    }
   }
   const want = [];
   // A speaker's focus can bid a specific building outright — the placement
