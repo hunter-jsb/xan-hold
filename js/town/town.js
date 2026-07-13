@@ -484,6 +484,14 @@ function dumpState() {
     town: { placed: [...S.placed.keys()], sites: S.sites.length, siteKeys: [...S.siteKeys], usedPlots: S.usedPlots.size, farmTiles: S.farmTiles.size, raiders: (S.raiders || []).length },
     lastWill: S.lastWill ? { utterance: S.lastWill.utterance, speakers: (S.lastWill.speakers || []).map((sp) => ({ name: sp.name, directive: sp.directive, orders: (sp.orders || []).map((o) => `${o.type}:${o.target || o.value || o.resource || ''}`) })) } : null,
     chronicle: (S.chronicle || []).slice(0, 12).map((c) => c.text),
+    perf: {
+      fps: Math.round((S.app && S.app.ticker && S.app.ticker.FPS) || 0),
+      entities: (S.entities && S.entities.children.length) || 0,   // everything the per-frame z-sort touches
+      villagers: S.villagers.length, wallSprites: (S.wallSprites || []).length, towerSprites: (S.towerSprites || []).length,
+      woodNodes: (S.woodNodes || []).length, oreNodes: (S.oreNodes || []).length,
+      farmTiles: S.farmTiles.size, sites: S.sites.length, raiders: (S.raiders || []).length,
+      scale: S.scale,
+    },
   };
   fetch('/debug', { method: 'POST', body: JSON.stringify(snap, null, 2) }).catch(() => {});
 }
