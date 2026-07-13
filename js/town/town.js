@@ -262,6 +262,26 @@ function discoveryBurst() {
   }
 }
 
+// divinePulse — golden rings ripple out from the reliquaries (or the keep if
+// none) when the Will speaks, so a decree is a divine MOMENT on screen.
+function divinePulse() {
+  const spots = [];
+  for (const [k, rec] of S.placed) if (k.startsWith('reliquary#') && rec.container) spots.push({ x: rec.container.x + TILE, y: rec.container.y + TILE });
+  if (!spots.length) spots.push({ x: CENTER_TX * TILE, y: CENTER_TY * TILE });
+  for (const s of spots) {
+    const ring = new Graphics(); ring.x = s.x; ring.y = s.y; ring.zIndex = 2e7;
+    S.entities.addChild(ring);
+    const t0 = performance.now();
+    const tick = () => {
+      const k = (performance.now() - t0) / 1300;
+      if (k >= 1) { S.entities.removeChild(ring); ring.destroy(); return; }
+      ring.clear().circle(0, 0, 4 + k * 44).stroke({ width: 2.2 * (1 - k), color: 0xffe27a, alpha: 0.75 * (1 - k) });
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }
+}
+
 // drawFealty — a faint gold thread from each pop to its speaker (v.liege), so
 // the fealty parishes (F9) read as a subtle web. Redrawn each frame (folk move).
 function drawFealty() {
@@ -587,6 +607,9 @@ function townTick() {
     if (last) pushChronicle('🤢 ' + last.text, 'raid');
   }
   S.lastPlagueTally = pl;
+  // the Will spoke since last look → a divine pulse from the shrines
+  if (S.willHistory.length > (S.lastWillCount || 0)) divinePulse();
+  S.lastWillCount = S.willHistory.length;
   renderOrders();
   updateHUD(); // folds the Folk legend + defense into the Pop chip now
 }
