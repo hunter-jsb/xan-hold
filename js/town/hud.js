@@ -126,7 +126,11 @@ export function updateHUD() {
   const hp = Math.round((g.happiness ?? 0.6) * 100);
   const moodGlyph = hp > 66 ? '😊' : hp > 40 ? '😐' : '😟';
   const moodFoot = `<div class="chip-foot"><span>${moodGlyph} mood</span><b class="${hp >= 50 ? 'up' : 'down'}">${hp}%${g.starving ? ' · hungry' : ''}</b></div>`;
-  const popChip = chip('pop', `${icon(CAT_ICON.pop)}${Math.floor(g.pop)}/${g.popCap()}`, folk + foodFoot + moodFoot + houseFoot + defFoot + troopFoot);
+  // Fealty: the folk split into parishes, one per speaker (the head speaker keeps
+  // the sizes even). Only meaningful once there's more than one speaker.
+  const parishes = S.parishSizes || [];
+  const fealtyFoot = parishes.length > 1 ? `<div class="chip-foot"><span>⛪ parishes</span><b>${parishes.join('·')}</b></div>` : '';
+  const popChip = chip('pop', `${icon(CAT_ICON.pop)}${Math.floor(g.pop)}/${g.popCap()}`, folk + foodFoot + moodFoot + fealtyFoot + houseFoot + defFoot + troopFoot);
 
   // Faith: a meter toward the Will's next invocation, not a tradeable good —
   // its own chip (not under Pop) because the speaker COUNT that fills it is

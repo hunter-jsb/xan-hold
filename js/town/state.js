@@ -20,6 +20,7 @@ export const S = {
   orderLog: [], focus: null, chronicle: [],
   stewardBusy: false, lastRaidTally: 0, alarm: 0,
   raiders: [], // live raid-wave enemies (raids.js) — path to the core, fought by soldiers
+  parishSizes: [], // folk per speaker (villagers.js assignFealty) — the head speaker's split
   hudOn: true, ui: { pinned: new Set() }, // ui.pinned: category keys clicked open (see chip() in updateHUD)
   cam: { x: CENTER_TX, y: CENTER_TY }, camAuto: true, lastInput: 0,
   hittable: [], // building bounds for hover-identify

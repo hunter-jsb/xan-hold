@@ -110,6 +110,15 @@ function defenseState() {
   };
 }
 
+// fealtyState — the command structure the Will audits: the folk are split into
+// parishes, one per speaker, kept balanced by the head speaker. spread = the gap
+// between the largest and smallest parish (0 = perfectly even; a good job).
+function fealtyState() {
+  const sizes = S.parishSizes || [];
+  if (!sizes.length) return { speakers: 0, parishes: [], spread: 0 };
+  return { speakers: sizes.length, parishes: sizes, spread: Math.max(...sizes) - Math.min(...sizes) };
+}
+
 export function stewardState(occasion, instruction) {
   const g = S.game, h = S.hold;
   const rate = g.rates();
@@ -117,6 +126,8 @@ export function stewardState(occasion, instruction) {
     occasion, instruction: instruction || '',
     name: h.name, tier: h.tierName, ancestry: h.ancestry, realm: h.realm, region: h.region,
     danger: h.danger, beingRaided: isRaided(), currentFocus: S.focus,
+    mood: +(g.happiness ?? 0.6).toFixed(2),   // folk morale (0..1) — hunger/plague/raids drag it down
+    fealty: fealtyState(),                     // the parishes under each speaker — audit the head's split
     resources: Object.fromEntries(Object.entries(g.res).map(([k, v]) => [k, Math.round(v)])),
     caps: g.caps(), rates: Object.fromEntries(Object.entries(rate).map(([k, v]) => [k, +v.toFixed(2)])),
     pop: Math.floor(g.pop), popCap: g.popCap(), defense: g.defense(), efficiency: +g.efficiency().toFixed(2),

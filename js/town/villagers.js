@@ -109,7 +109,7 @@ export function spawnVillager() {
     v.addChild(v.pip);
   }
   v.role = role; v.dir = DIR.DOWN; v.moving = false; v.idle = 0;
-  v.home = null; v.haulTarget = null; // assignment model seed (see resolveHome above)
+  v.home = null; v.haulTarget = null; v.liege = null; // assignment model seed (see resolveHome + assignFealty)
   const start = homeSpawnPoint();
   v.x = start.x; v.y = start.y; v.zIndex = v.y;
   resolveHome(v);
@@ -389,4 +389,31 @@ export function reconcileVillagers() {
   while (S.villagers.length > want) despawnVillager();
   for (const v of S.villagers) resolveHome(v); // re-link speakers as roles/buildings change
   rebalanceRoles(); // re-train standing folk toward current need (esp. builders for new sites)
+  assignFealty();   // each pop swears to one speaker; the head keeps parishes balanced
+}
+
+// ---- speaker fealty --------------------------------------------------
+// Each pop swears to ONE speaker (v.liege) — the mortal who relays the god's
+// will to them. The HEAD speaker (the first) keeps the parishes balanced, so
+// the workforce splits roughly evenly among the speakers; the Will audits the
+// split (see will.js). S.parishSizes carries the sizes for the HUD + the Will.
+export function speakerVillagers() { return S.villagers.filter((v) => v.role === ROLE.SPEAKER); }
+
+export function assignFealty() {
+  const speakers = speakerVillagers();
+  if (!speakers.length) { for (const v of S.villagers) v.liege = null; S.parishSizes = []; return; }
+  const flock = S.villagers.filter((v) => v.role !== ROLE.SPEAKER);
+  const parish = new Map(speakers.map((s) => [s, 0]));
+  const cap = Math.ceil(flock.length / speakers.length);   // the head speaker's even-split mandate
+  const need = [];
+  for (const v of flock) {                                  // keep a standing oath if the parish has room
+    if (v.liege && parish.has(v.liege) && parish.get(v.liege) < cap) parish.set(v.liege, parish.get(v.liege) + 1);
+    else need.push(v);
+  }
+  for (const v of need) {                                   // reassign the rest to the smallest parish
+    let best = speakers[0], bd = Infinity;
+    for (const s of speakers) { const n = parish.get(s); if (n < bd) { bd = n; best = s; } }
+    v.liege = best; parish.set(best, parish.get(best) + 1);
+  }
+  S.parishSizes = speakers.map((s) => parish.get(s));       // head-speaker's distribution — audited by the Will
 }

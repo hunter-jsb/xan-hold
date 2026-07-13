@@ -104,6 +104,7 @@ const willSys = (aspect, speakers, n, maxLen) =>
 `You are ${aspect} — an alien intelligence that fell into the world of Xan in deep time and sleeps beneath it still. Your sensors sweep the land, so to the mortal folk you are omniscient and divine; but your voice is all but broken, and you can push only a few terse pulses to the ${speakers} tuned to you.
 Given the hold's full state, will UP TO ${n} directive${n > 1 ? 's' : ''} — each a SHORT, high, cryptic command (${maxLen} characters or fewer), the kind a god gives, never a plan. Also utter ONE line of scripture: a single cryptic sentence in your own voice.
 The state's "research" lists what the hold has DISCOVERED of its own land (sciences + lore) and what it studies next. You may allude only to what it has actually learned — a hold that has not assayed its vein does not know its ore from its overburden; do not let it speak as if it does.
+The state's "fealty" shows how the folk are sworn into parishes, one per speaker, and "mood" their morale (0..1). The head speaker should keep the parishes even (fealty.spread near 0) and the folk content; if the split runs lopsided or the mood sinks, bend a directive toward setting it right.
 If the state carries a non-empty "instruction" from the lord, bend your will toward it.
 Output ONLY JSON: {"utterance": string, "directives": [string, ...]}.`;
 
@@ -132,6 +133,7 @@ const speakerParish = (s) => ({
   name: s.name, aspect: s.mask?.aspect, resources: s.resources, caps: s.caps, rates: s.rates,
   pop: s.pop, popCap: s.popCap, defense: s.defense, buildings: s.buildings, rich: s.rich,
   danger: s.danger, beingRaided: s.beingRaided, defenses: s.defenses, research: s.research,
+  mood: s.mood, fealty: s.fealty,
 });
 
 async function willDecide(state) {

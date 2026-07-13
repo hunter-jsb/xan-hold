@@ -32,7 +32,7 @@ own commit so anything can be rolled back.
 | F6 | research — discover geology/salt/lore from world.js | new research.js, game.js, hud.js, serve.mjs | ✅ |
 | F7 | sectioned walls + wall levels | walls.js, orders.js, state.js | ✅ |
 | F8 | people fight raids; pathing affects clash | villagers.js, game.js, town.js, raids.js, state.js | ✅ |
-| F9 | speaker fealty (pop→speaker, head-speaker worker distro) | villagers.js, orders.js, will.js, serve.mjs | ☐ |
+| F9 | speaker fealty (pop→speaker, head-speaker worker distro) | villagers.js, will.js, hud.js, serve.mjs, state.js | ✅ |
 | F10 | speaker UI cleanup + filterable log popout | hud.js, ui.js, town.css | ✅ |
 | F11 | building relocation as a build action (wall-aware) | buildings.js, orders.js, constants.js, hud.js | ✅ |
 
@@ -46,6 +46,13 @@ the REAL local rock/rockAge (geology), salt/salinity (deposits), drainage/river,
 elevation, nearby named features, and realm history. Nothing is invented.
 
 ## Log
+- 2026-07-13: **F9 done — ALL 11 FEATURES COMPLETE.** Speaker fealty: each pop
+  swears to ONE speaker (v.liege); the HEAD speaker keeps the parishes balanced
+  (assignFealty, even split, called from reconcileVillagers); S.parishSizes
+  carries the distribution. The Will AUDITS it — will.js stewardState gains
+  `fealty` (parish sizes + spread) and `mood`, and serve.mjs tells the god to
+  set a lopsided split or low morale right. HUD Pop chip shows the parishes
+  (⛪ N·N·N). Verifier + both harnesses clean.
 - 2026-07-13: **F11 done** (delegated to a Sonnet subagent, reviewed by me).
   Building relocation as a MOVE order: relocateBuilding(key, dest) repositions a
   placed building, swaps its plot record, patches its hittable box (by key),
