@@ -391,10 +391,12 @@ export function localSteward() {
     }
   }
   const want = [];
-  // A speaker's focus can bid a specific building outright — the placement
-  // layer (nextCorePlot/nextOuterPlot/nextFarmPlot) still decides WHICH
-  // district it lands in by type, so this only biases priority, not routing.
-  if (S.focus && S.focus !== FOCUS.FOOD && S.focus !== FOCUS.DEFENSE && BUILDINGS.some((b) => b.id === S.focus)) want.push(S.focus);
+  // The hold's FOCUS (the founding decree, or a speaker's standing focus) biases
+  // what gets built next: a named focus leans toward its buildings; a focus that
+  // IS a building id bids that one outright. Placement still routes by type.
+  const FOCUS_BUILDS = { growth: ['longhouse', 'granary'], trade: ['saltern', 'market'], industry: ['sawmill', 'quarry', 'mine'], food: ['farm', 'wharf'], defense: ['barracks'] };
+  if (FOCUS_BUILDS[S.focus]) for (const id of FOCUS_BUILDS[S.focus]) want.push(id);
+  else if (S.focus && BUILDINGS.some((b) => b.id === S.focus)) want.push(S.focus);
   // ESSENTIALS first — every hold needs its own timber source, a food source,
   // and housing before it sinks materials into coin/markets/luxuries. (A
   // coin-rich hold got this wrong: it built markets, went timber-broke, and

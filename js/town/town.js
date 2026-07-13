@@ -64,8 +64,10 @@ async function boot() {
   S.mask = holdMask(S.hold);                         // the god's local face
   ROLE_LABEL.speaker = S.mask.speakers.replace(/s$/, ''); // e.g. "Deepspeaker" in the Folk legend
   loadWalls();                                        // restore this hold's grown wall/gate tiles (see saveWalls)
+  const founding = !Game.hasSave(S.hold.id);          // a never-played hold — its speaker will decree a calling
   S.game = Game.load(S.hold);
   const away = S.game.catchUp();
+  if (founding) S.focus = pickFoundingFocus(S.hold);  // set the opening's aim BEFORE the first localSteward runs
   window.__S = S; // debug: live-state inspection while diagnosing the steward/economy (temporary)
 
   mark('init pixi');
@@ -102,6 +104,7 @@ async function boot() {
   layoutWorld();
   window.addEventListener('resize', layoutWorld);
   initHUD(away);
+  if (founding && S.focus) pushChronicle(`The ${S.mask.speakers.replace(/s$/, '')} calls ${S.hold.name} to ${S.focus}.`, 'note');
   initStewardAsk(); // the god-ask input (will bridge) — wired here, not from initHUD, to keep hud.js free of will.js
   wireKeys();
   initZoom();
@@ -130,6 +133,22 @@ function pickHold() {
   const viable = holds.filter((h) => (h.rich.food || 0) >= 0.08 || (h.n && ((h.n.riverMax || 0) > 0.08 || (h.n.lake || 0) > 0.08 || (h.n.sea || 0) > 0.05)));
   const pool = viable.length ? viable : holds;
   return pool[Math.floor(Math.random() * pool.length)];
+}
+
+// pickFoundingFocus — the founding speaker's calling for a NEW hold, weighted by
+// the land + a roll, so each fresh settlement opens toward a different aim
+// (food/defense/growth/trade/industry) instead of the same deterministic build.
+function pickFoundingFocus(h) {
+  const r = h.rich || {}, w = { growth: 1, food: 1, trade: 1, industry: 1, defense: 1 };
+  if ((h.danger || 0) > 0.4) w.defense += 2;
+  if ((r.food || 0) < 0.25) w.food += 1.5;
+  if ((r.coin || 0) > 0.5) w.trade += 1.5;
+  if ((r.ore || 0) + (r.stone || 0) > 0.6) w.industry += 1.5;
+  if ((r.food || 0) > 0.5 && (h.danger || 0) < 0.3) w.growth += 1.5;
+  const entries = Object.entries(w), tot = entries.reduce((a, [, v]) => a + v, 0);
+  let x = Math.random() * tot;
+  for (const [k, v] of entries) if ((x -= v) <= 0) return k;
+  return 'growth';
 }
 
 function bgForHold(h) {

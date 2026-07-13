@@ -53,7 +53,8 @@ export const TRADE_ACT = { BUY: 'buy', SELL: 'sell' };
 export const WORK_S = { [ORDER.BUILD]: 5, [ORDER.TRADE]: 2.5, [ORDER.FOCUS]: 1, [ORDER.EXPAND]: 5, [ORDER.WALL]: 5, [ORDER.MOVE]: 4 };
 
 // ---- focuses (a speaker/steward priority that isn't a building id) ---
-export const FOCUS = { FOOD: 'food', DEFENSE: 'defense' };
+// The founding speaker decrees one at a new hold; a speaker can set one later.
+export const FOCUS = { FOOD: 'food', DEFENSE: 'defense', GROWTH: 'growth', TRADE: 'trade', INDUSTRY: 'industry' };
 
 // ---- walk directions -------------------------------------------------
 export const DIR = { DOWN: 'down', UP: 'up', LEFT: 'left', RIGHT: 'right' };
