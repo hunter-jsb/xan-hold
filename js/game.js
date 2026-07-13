@@ -16,6 +16,8 @@ const CFG = {
   faithBase: 60,          // faithThreshold() floor (at 1 speaker)
   faithPerSpeakerThresh: 40, // faithThreshold() rise per speaker
   dayMs: 240000,          // a full day/night in real ms — SHARED with town.js (daylight drives food spoilage + the night overlay)
+  seasonDays: 2,          // real days per season (a year = 4× this) — season shifts warmth
+  seasonWarmthAmp: 0.18,  // ± warmth swing between mid-summer and mid-winter
   // Food spoilage: stored food turns, faster when warm (main), in daylight, and
   // piled on the ground (unsheltered by storehouses). Salt preserves most of it.
   foodSpoilMax: 0.0004,   // full-severity fraction of the food pile lost per second
@@ -30,6 +32,7 @@ const CFG = {
   basePrice: { grain: 0.5, roots: 0.5, greens: 0.45, fruit: 0.75, fish: 0.55, timber: 0.6, stone: 1.1, ore: 1.6, salt: 1.8 },
   tradeLot: 10,
 };
+const YEAR_MS = CFG.dayMs * CFG.seasonDays * 4; // four seasons make a year
 
 // Building catalogue. `rich` is the local-richness key that scales output;
 // `gate` is the minimum richness for it to be offered at all. Support
@@ -488,14 +491,15 @@ class Game {
   // five categories: FARMS grow per-plot (each plot's crop → its category,
   // scaled by how well the climate suits that crop AND the soil's fertility),
   // and WHARVES land fish. Everything else is the flat level×richness output.
-  rates() {
+  rates(offline = false) {
     const eff = this.efficiency();
     const out = { grain: 0, roots: 0, greens: 0, fruit: 0, fish: 0, timber: 0, stone: 0, ore: 0, salt: 0, coin: 0 };
     const fMul = this.bon.mul.food, fertile = 0.35 + 0.65 * (this.h.rich.food || 0);
+    const warmth = this.warmthNow(offline);          // crops grow to the season's warmth, not just the baseline
     for (const p of this.farmPlots) {
       const crop = CROP_BY_ID[p.crop];
       if (!crop) continue;
-      const suit = cropSuit(crop, this.h.warmth, this.water);
+      const suit = cropSuit(crop, warmth, this.water);
       out[crop.cat] += BY_ID.farm.base * (p.size || 1) * crop.yield * suit * fertile * eff * fMul;
     }
     const wl = this.level('wharf');
@@ -519,6 +523,29 @@ class Game {
   // days anyway.
   dayFrac() { return (Date.now() % CFG.dayMs) / CFG.dayMs; }
   daylight(offline = false) { return offline ? 0.5 : 0.5 + 0.5 * Math.sin((this.dayFrac() - 0.25) * 2 * Math.PI); }
+  // dayPartName — the readable phase of the day (for the HUD sky chip).
+  dayPartName() {
+    const l = this.daylight();
+    if (l > 0.75) return 'Day';
+    if (l < 0.25) return 'Night';
+    return this.dayFrac() < 0.5 ? 'Dawn' : 'Dusk'; // rising vs falling half of the light curve
+  }
+
+  // ---- seasons -------------------------------------------------------
+  // The year turns through four seasons (CFG.seasonDays each), shifting the
+  // hold's warmth — summer hotter, winter colder. That flows into crop growth
+  // (rates) and food spoilage (stepSpoilage): a warm reach bakes in summer, a
+  // frigid march freezes its fields in winter.
+  seasonFrac() { return (Date.now() % YEAR_MS) / YEAR_MS; }   // 0 = spring's start … 1
+  seasonName() { return ['Spring', 'Summer', 'Autumn', 'Winter'][Math.floor(this.seasonFrac() * 4) % 4]; }
+  seasonWarmthDelta() { return CFG.seasonWarmthAmp * Math.sin(this.seasonFrac() * 2 * Math.PI); }
+  // warmthNow — the hold's warmth AS FELT NOW (baseline climate + season).
+  // Offline catch-up spans whole seasons, so it uses the baseline (no delta),
+  // mirroring daylight(offline)'s daily-average trick.
+  warmthNow(offline = false) {
+    const w = Math.max(0, Math.min(1, this.h.warmth || 0));
+    return offline ? w : Math.max(0, Math.min(1, w + this.seasonWarmthDelta()));
+  }
 
   // foodOnGround: the fraction of ALL stored food that no storehouse can shelter
   // — food beyond the sheds' added capacity (summed across the five categories)
@@ -545,7 +572,7 @@ class Game {
     this.spoilLast = 0; this.spoilSaltLast = 0; this.spoilByCat = {};
     const total = this.foodTotal();
     if (total <= 0) return 0;
-    const warmth = Math.max(0, Math.min(1, this.h.warmth || 0));
+    const warmth = this.warmthNow(offline);          // baseline climate + the season's swing
     const sun = this.daylight(offline), ground = this.foodOnGround();
     const gate = 0.2 + 0.8 * warmth;                 // climate susceptibility (frigid → hot)
     const exposure = 0.5 + 0.3 * sun + 0.2 * ground; // sheltered-night 0.5 → open-noon 1.0
@@ -612,7 +639,7 @@ class Game {
   // ---- the tick ------------------------------------------------------
   // step advances `dt` seconds of sim: production, food/pop, storage caps.
   step(dt, offline = false) {
-    const rate = this.rates();
+    const rate = this.rates(offline);
     const caps = this.caps();
     for (const k of Object.keys(rate)) {
       this.res[k] = Math.min(caps[k], (this.res[k] || 0) + rate[k] * dt);

@@ -27,7 +27,7 @@ own commit so anything can be rolled back.
 | F1 | district-border highlight on hover | town.js | ✅ |
 | F2 | per-instance building levels + upgrade action | game.js, buildings.js, town.js, hud.js | ✅ |
 | F3 | keep as an upgradeable building (physical + functional) | game.js, buildings.js, town.js | ✅ |
-| F4 | seasons + clearer day/night | game.js, terrain.js, town.js, hud.js | ☐ |
+| F4 | seasons + clearer day/night | game.js, terrain.js, town.js, hud.js | ✅ |
 | F5 | starvation, disease, unhappiness | game.js, hud.js | ☐ |
 | F6 | research — discover geology/salt/lore from world.js | new research.js, game.js, world.js, hud.js, serve.mjs | ☐ |
 | F7 | sectioned walls + wall levels | walls.js, orders.js, state.js | ☐ |
@@ -46,6 +46,15 @@ the REAL local rock/rockAge (geology), salt/salinity (deposits), drainage/river,
 elevation, nearby named features, and realm history. Nothing is invented.
 
 ## Log
+- 2026-07-13: **F4 done** — a year now turns through four seasons (CFG.seasonDays,
+  ~8 min each). `warmthNow(offline)` = baseline climate + a seasonal ±0.18 swing,
+  threaded into stepSpoilage AND rates() (crops), so summer grows fast but spoils
+  fast, winter preserves but slows growth. Day/night is clearer: deeper nights,
+  a warm-ember tint through the golden hour (dawn+dusk), and a faint per-season
+  colour wash. Overlays became white-Sprite tints (reliable per-frame tint;
+  Texture.WHITE confirmed in vendored pixi). HUD gains a "sky" chip (day-part +
+  season + warmth). Harness now 54 assertions. EYEBALL: night depth, the
+  golden-hour warmth, and the season wash are render-only — confirm they read.
 - 2026-07-13: **F3 done** — the keep is now a real upgradeable building (`keep`
   in BUILDINGS, kind civic, instances.keep=[L], max level 4, always present).
   PHYSICAL: `keepRecipe(level)` grows it taller each level (extra wall courses);

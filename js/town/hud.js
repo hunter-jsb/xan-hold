@@ -125,7 +125,22 @@ export function updateHUD() {
   const faithFoot = `<div class="chip-foot"><span>threshold</span><b>${Math.floor(g.faith)}/${g.faithThreshold()}</b></div>`;
   const faithChip = chip('faith', `${icon(CAT_ICON.faith)}${Math.floor(g.faith)}/${g.faithThreshold()}`, faithRows + faithFoot);
 
-  document.getElementById('resstrip').innerHTML = catChips + popChip + faithChip;
+  // Sky: the turning day + season — the world clock and its warmth swing (which
+  // drives crop growth + food spoilage). Not a resource, so special-cased here.
+  const part = g.dayPartName();
+  const dayGlyph = part === 'Day' ? '☀️' : part === 'Night' ? '🌙' : part === 'Dawn' ? '🌅' : '🌇';
+  const season = g.seasonName();
+  const seasonGlyph = { Spring: '🌱', Summer: '🌞', Autumn: '🍂', Winter: '❄️' }[season];
+  const dwd = g.seasonWarmthDelta();
+  const swing = dwd > 0.02 ? 'warmer — crops thrive, food turns fast'
+    : dwd < -0.02 ? 'colder — crops slow, food keeps' : 'mild';
+  const skyRows = `<div class="chip-row"><span>time</span><b>${dayGlyph} ${part}</b></div>`
+    + `<div class="chip-row"><span>season</span><b>${seasonGlyph} ${season}</b></div>`
+    + `<div class="chip-foot"><span>warmth now</span><b>${Math.round(g.warmthNow() * 100)}%</b></div>`
+    + `<div class="chip-cap">${swing}</div>`;
+  const skyChip = chip('sky', `${dayGlyph} ${seasonGlyph}`, skyRows);
+
+  document.getElementById('resstrip').innerHTML = catChips + popChip + faithChip + skyChip;
 }
 
 // initChipToggle: clicking a chip's collapsed head pins it open (toggle);

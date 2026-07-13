@@ -4,7 +4,7 @@
 // heuristic keeps building, and when faith crests (or on `p`) the Divine Will
 // at /will returns terse directives its speakers turn into orders + an
 // in-world chronicle. Nothing here writes back to the sim.
-import { Application, Container, Graphics } from 'pixi.js';
+import { Application, Container, Graphics, Sprite, Texture } from 'pixi.js';
 import { loadAtlas, TILE } from './atlas.js';
 import { TOWN_W, TOWN_H, CENTER_TX, CENTER_TY, DAY_MS, STEWARD_MS, LOCAL_MS, ROLE_LABEL, HIGHLIGHT_COLOR, BUILD_NAME } from './constants.js';
 import { S, heldKeys } from './state.js';
@@ -93,8 +93,9 @@ async function boot() {
   reconcileBuildings();  // existing buildings appear without a poof
   S.booted = true;       // from here on, finished construction gets an effect
   S.night = makeOverlay(0x0a1230);
+  S.seasonFx = makeOverlay(0xffffff); S.seasonFx.alpha = 0; // recoloured per season each frame
   S.alarmFx = makeOverlay(0xff2a1a); S.alarmFx.alpha = 0;
-  S.app.stage.addChild(S.night, S.alarmFx);
+  S.app.stage.addChild(S.seasonFx, S.night, S.alarmFx);
 
   layoutWorld();
   window.addEventListener('resize', layoutWorld);
@@ -131,13 +132,26 @@ function bgForHold(h) {
 
 
 
-// ---- day/night + frame ---------------------------------------------
+// ---- day/night + season + frame ------------------------------------
+// A full-screen multiply tint. A white-texture Sprite (not a Graphics) so its
+// tint can be re-set every frame — the night warms through dusk, and the
+// season wash recolours by season.
 function makeOverlay(color) {
-  const g = new Graphics().rect(0, 0, 1, 1).fill(color);
-  g.width = window.innerWidth; g.height = window.innerHeight;
-  g.blendMode = 'multiply';
-  return g;
+  const s = new Sprite(Texture.WHITE);
+  s.tint = color;
+  s.width = window.innerWidth; s.height = window.innerHeight;
+  s.blendMode = 'multiply';
+  return s;
 }
+
+// lerpColor blends two 0xRRGGBB colors per channel (t in 0..1).
+function lerpColor(a, b, t) {
+  const ar = (a >> 16) & 255, ag = (a >> 8) & 255, ab = a & 255;
+  const br = (b >> 16) & 255, bg = (b >> 8) & 255, bb = b & 255;
+  return (Math.round(ar + (br - ar) * t) << 16) | (Math.round(ag + (bg - ag) * t) << 8) | Math.round(ab + (bb - ab) * t);
+}
+// A faint multiply cast per season — winter cool, autumn amber, etc.
+const SEASON_TINT = { Spring: 0xdaf0d2, Summer: 0xfff0d2, Autumn: 0xf2d8b4, Winter: 0xcdd8f2 };
 
 function onFrame(ticker) {
   const dt = Math.min(0.1, ticker.deltaMS / 1000);
@@ -175,11 +189,17 @@ function onFrame(ticker) {
   }
   S.world.x = Math.round(window.innerWidth / 2 - S.cam.x * TILE * S.scale);
   S.world.y = Math.round(window.innerHeight / 2 - S.cam.y * TILE * S.scale);
-  // day/night
+  // day/night + season
   const phase = (Date.now() % DAY_MS) / DAY_MS;                 // 0..1
   const daylight = 0.5 + 0.5 * Math.sin((phase - 0.25) * 2 * Math.PI); // noon=1, midnight=0
-  S.night.alpha = 0.55 * (1 - daylight);
+  S.night.alpha = 0.62 * (1 - daylight);                       // deeper, clearer nights
+  const duskAmt = Math.max(0, 1 - Math.abs(daylight - 0.5) / 0.25); // the sun sits low near daylight 0.5 (dawn + dusk)
+  S.night.tint = lerpColor(0x0a1230, 0x241010, duskAmt);       // cold-blue night → warm ember at the golden hour
   S.night.width = window.innerWidth; S.night.height = window.innerHeight;
+  // a faint seasonal cast over the whole scene
+  S.seasonFx.tint = SEASON_TINT[S.game.seasonName()];
+  S.seasonFx.alpha = 0.12;
+  S.seasonFx.width = window.innerWidth; S.seasonFx.height = window.innerHeight;
   // raid alarm pulse
   if (S.alarm > 0) { S.alarm -= dt; S.alarmFx.alpha = 0.18 * Math.max(0, Math.sin(S.alarm * 10)); S.alarmFx.width = window.innerWidth; S.alarmFx.height = window.innerHeight; }
   else S.alarmFx.alpha = 0;
