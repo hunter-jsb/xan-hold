@@ -10,6 +10,7 @@ import { nearestNode, STONE_KIND } from './terrain.js';
 import { nearestSite, finalizeSite } from './buildings.js';
 import { troopCap } from './walls.js';
 import { raidActive, nearestRaider } from './raids.js';
+import { emit } from './fx.js';
 
 // ---- villagers ------------------------------------------------------
 export function roleWeights() {
@@ -208,19 +209,7 @@ export function pickTarget(v) {
 
 // workEffect — sparks fly when a node is being worked (mining/chopping).
 export function workEffect(node) {
-  for (let i = 0; i < 5; i++) {
-    const p = new Graphics().circle(0, 0, 1 + Math.random() * 1.4).fill(0xfff2c0);
-    p.x = node.x + (Math.random() - 0.5) * 10; p.y = node.y - 6 - Math.random() * 4; p.zIndex = 1e7;
-    S.entities.addChild(p);
-    const vx = (Math.random() - 0.5) * 22, vy = -14 - Math.random() * 10, t0 = performance.now();
-    const tick = () => {
-      const k = (performance.now() - t0) / 480;
-      if (k >= 1) { S.entities.removeChild(p); p.destroy(); return; }
-      p.x += vx * 0.016; p.y += vy * 0.016; p.alpha = 1 - k;
-      requestAnimationFrame(tick);
-    };
-    requestAnimationFrame(tick);
-  }
+  emit({ x: node.x, y: node.y - 8, n: 5, color: 0xfff2c0, spread: 5, hspread: 11, rise: 14, vspread: 10, life: 0.48, size: 1.4 });
 }
 
 // nearestBuilding returns the pixel centre AND S.hittable entry (`ref`) of the
@@ -265,19 +254,7 @@ export function fellTree(node) {
 }
 
 export function chipBurst(x, y) {
-  for (let i = 0; i < 6; i++) {
-    const p = new Graphics().rect(-1, -1, 2, 2).fill(0x8a5a2b);
-    p.x = x + (Math.random() - 0.5) * 10; p.y = y - 6 - Math.random() * 4; p.zIndex = 1e7;
-    S.entities.addChild(p);
-    const vx = (Math.random() - 0.5) * 20, vy = -12 - Math.random() * 9, t0 = performance.now();
-    const tick = () => {
-      const k = (performance.now() - t0) / 540;
-      if (k >= 1) { S.entities.removeChild(p); p.destroy(); return; }
-      p.x += vx * 0.016; p.y += vy * 0.016 + k * 4; p.alpha = 1 - k;
-      requestAnimationFrame(tick);
-    };
-    requestAnimationFrame(tick);
-  }
+  emit({ x, y: y - 8, n: 6, color: 0x8a5a2b, square: true, spread: 5, hspread: 10, rise: 12, vspread: 9, gravity: 40, life: 0.54, size: 1 });
 }
 
 // CARRY — the shared "carry a commodity from a work node to its home

@@ -1,10 +1,11 @@
 // terrain.js — the world's ground: plot grid, ground + forest painting, forest
 // regrowth, the ore field, water features, and build/appear sprite effects.
-import { Sprite, Graphics } from 'pixi.js';
+import { Sprite } from 'pixi.js';
 import { TILE } from './atlas.js';
 import { S } from './state.js';
 import { PLOT, PLOTS_X, PLOTS_Y, TOWN_W, TOWN_H, CENTER_TX, CENTER_TY, CENTER_PX, CENTER_PY } from './constants.js';
 import { rng, DIRS4 } from './coords.js';
+import { emit } from './fx.js';
 
 export function buildPlots() {
   const cx = CENTER_PX, cy = CENTER_PY;
@@ -416,19 +417,7 @@ export function wharfSiteAvailable() {
 
 // constructionPoof — a little burst of dust when a building is finished.
 export function constructionPoof(px, py) {
-  for (let i = 0; i < 7; i++) {
-    const p = new Graphics().circle(0, 0, 1.5 + Math.random() * 2).fill(0xefe6d2);
-    p.x = px + (Math.random() - 0.5) * 14; p.y = py - Math.random() * 3;
-    p.zIndex = 1e7; S.entities.addChild(p);
-    const vx = (Math.random() - 0.5) * 16, vy = -10 - Math.random() * 12, t0 = performance.now();
-    const tick = () => {
-      const k = (performance.now() - t0) / 620;
-      if (k >= 1) { S.entities.removeChild(p); p.destroy(); return; }
-      p.x += vx * 0.016; p.y += vy * 0.016; p.alpha = 1 - k; p.scale.set(1 + k);
-      requestAnimationFrame(tick);
-    };
-    requestAnimationFrame(tick);
-  }
+  emit({ x: px, y: py - 2, n: 7, color: 0xefe6d2, spread: 7, hspread: 8, rise: 10, vspread: 12, life: 0.62, size: 2, grow: 3 });
 }
 
 export function riseIn(c) {

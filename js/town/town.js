@@ -7,6 +7,7 @@
 import { Application, Container, Graphics, Sprite, Texture, AnimatedSprite } from 'pixi.js';
 import { loadAtlas, TILE } from './atlas.js';
 import { goTo } from './pathfind.js';
+import { emit, stepFx } from './fx.js';
 import { TOWN_W, TOWN_H, CENTER_TX, CENTER_TY, DAY_MS, STEWARD_MS, LOCAL_MS, ROLE_LABEL, HIGHLIGHT_COLOR, BUILD_NAME } from './constants.js';
 import { S, heldKeys } from './state.js';
 import { loadWalls } from './walls.js';
@@ -226,19 +227,7 @@ function stepWeather(dt) {
 // hold's state — yellow content, blue glum, orange hungry, green sick — so
 // morale/hunger/sickness (F5) read on screen, not just in the HUD.
 function villagerEmote(v, color) {
-  const g = new Graphics().circle(0, 0, 3.4).fill(color).stroke({ width: 0.8, color: 0x14140f, alpha: 0.6 });
-  const dot = new Graphics().circle(-1, -1, 1).fill({ color: 0xffffff, alpha: 0.7 }); // a highlight so it reads as a bubble
-  g.addChild(dot);
-  g.x = v.x; g.y = v.y - 30; g.zIndex = 1e7;
-  S.entities.addChild(g);
-  const t0 = performance.now();
-  const tick = () => {
-    const k = (performance.now() - t0) / 1100;
-    if (k >= 1 || !v.parent) { S.entities.removeChild(g); g.destroy(); return; }
-    g.x = v.x; g.y = v.y - 30 - k * 10; g.alpha = 1 - k * k;
-    requestAnimationFrame(tick);
-  };
-  requestAnimationFrame(tick);
+  emit({ x: v.x, y: v.y - 28, color, rise: 9, life: 1.1, size: 3.4 });
 }
 // discoveryBurst — a eureka of gold + insight-blue sparks rises from the
 // Scholars' Hall (or the keep) when a new discovery lands, so research reads as
@@ -247,20 +236,7 @@ function discoveryBurst() {
   const hall = [...S.placed.entries()].find(([k]) => k.startsWith('scholarshall#'));
   const c = hall && hall[1] && hall[1].container;
   const px = c ? c.x + TILE : CENTER_TX * TILE, py = c ? c.y : CENTER_TY * TILE;
-  for (let i = 0; i < 16; i++) {
-    const col = i % 2 ? 0xf2d24e : 0x8fd0ff;
-    const g = new Graphics().circle(0, 0, 1.4 + Math.random()).fill(col);
-    g.x = px + (Math.random() - 0.5) * 20; g.y = py - Math.random() * 8; g.zIndex = 1e7;
-    S.entities.addChild(g);
-    const vx = (Math.random() - 0.5) * 28, vy = -22 - Math.random() * 22, t0 = performance.now();
-    const tick = () => {
-      const k = (performance.now() - t0) / 1050;
-      if (k >= 1) { S.entities.removeChild(g); g.destroy(); return; }
-      g.x += vx * 0.016; g.y += vy * 0.016; g.alpha = 1 - k;
-      requestAnimationFrame(tick);
-    };
-    requestAnimationFrame(tick);
-  }
+  emit({ x: px, y: py, n: 16, color: [0xf2d24e, 0x8fd0ff], spread: 10, hspread: 16, rise: 24, vspread: 20, life: 1.05, size: 1.8 });
 }
 
 // ---- trade caravans -------------------------------------------------
@@ -304,18 +280,7 @@ function divinePulse() {
   const spots = [];
   for (const [k, rec] of S.placed) if (k.startsWith('reliquary#') && rec.container) spots.push({ x: rec.container.x + TILE, y: rec.container.y + TILE });
   if (!spots.length) spots.push({ x: CENTER_TX * TILE, y: CENTER_TY * TILE });
-  for (const s of spots) {
-    const ring = new Graphics(); ring.x = s.x; ring.y = s.y; ring.zIndex = 2e7;
-    S.entities.addChild(ring);
-    const t0 = performance.now();
-    const tick = () => {
-      const k = (performance.now() - t0) / 1300;
-      if (k >= 1) { S.entities.removeChild(ring); ring.destroy(); return; }
-      ring.clear().circle(0, 0, 4 + k * 44).stroke({ width: 2.2 * (1 - k), color: 0xffe27a, alpha: 0.75 * (1 - k) });
-      requestAnimationFrame(tick);
-    };
-    requestAnimationFrame(tick);
-  }
+  for (const s of spots) emit({ x: s.x, y: s.y, ring: true, size: 4, grow: 34, life: 1.3, color: 0xffe27a, alpha: 0.78 });
 }
 
 // drawFealty — a faint gold thread from each pop to its speaker (v.liege), so
@@ -351,6 +316,7 @@ function onFrame(ticker) {
   stepRaid(dt);   // advance any live raid wave (move raiders, resolve the clash)
   stepWeather(dt); // drift the seasonal snow/leaves/petals
   stepCaravan(dt); // trundle any trade caravans between market + edge
+  stepFx(dt);      // advance the whole particle pool (bursts/emotes/poofs/pulses)
   drawFealty();    // the faint parish threads from folk to their speaker
   // hover highlight rings: perma (v.home) vs temp (v.haulTarget) assignees of
   // S.hoverBuilding — only exist while hovering (see setHoverBuilding).
