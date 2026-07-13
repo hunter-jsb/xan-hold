@@ -1,10 +1,3 @@
-:root {
-  --bg: #0d1014; --bg2: #151a20; --panel: #1b2129; --line: #2a323c;
-  --ink: #e6e2d8; --dim: #8a8f98; --gold: #ffd479; --good: #7fd18b;
-  --warn: #e6b155; --bad: #e5736b; --accent: #7fa8d1;
-  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
-  --serif: "Iowan Old Style", "Palatino Linotype", Georgia, serif;
-}
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; }
 body {

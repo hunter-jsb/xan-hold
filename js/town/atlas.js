@@ -64,18 +64,27 @@ const GROUND = { grass: [0, 1, 2], dirt: [25], path: [39, 40, 41], cobble: [43] 
 
 // Trees compose as top-over-bottom stacks for a full canopy; small trees and
 // bushes add variety. The tall stacks are weighted (repeated) so a forest
-// reads lush. (Cluster fragments like 30/31/33 are never placed alone.)
+// reads lush, with a second, narrower silhouette (the 3x3 mosaic's CENTER
+// column, which composites clean on its own — the outer columns don't;
+// see CLUSTERS) mixed in at lower weight for canopy variety.
 const TREES = {
-  green: [{ t: 4, b: 16 }, { t: 4, b: 16 }, { t: 4, b: 16 }, { b: 28 }, { b: 5 }],
-  autumn: [{ t: 3, b: 15 }, { t: 3, b: 15 }, { t: 3, b: 15 }, { b: 27 }, { b: 5 }],
+  green: [{ t: 4, b: 16 }, { t: 4, b: 16 }, { t: 7, b: 31 }, { b: 28 }, { b: 5 }],
+  autumn: [{ t: 3, b: 15 }, { t: 3, b: 15 }, { t: 10, b: 34 }, { b: 27 }, { b: 5 }],
 };
 
 // Big 3x3 forest masses for dense grove cores — placed ONLY as complete blocks
-// (fragments render as cut stumps). Rows: [tops, mids, bottoms].
+// (fragments render as cut stumps). Rows: [tops, mids, bottoms]. The centre
+// column (7/19/31, 10/22/34) is the exception — it composites clean alone,
+// which is where TREES' second tall shape above comes from.
 const CLUSTERS = {
   green: [[6, 7, 8], [18, 19, 20], [30, 31, 32]],
   autumn: [[9, 10, 11], [21, 22, 23], [33, 34, 35]],
 };
+
+// Forest-floor clutter — purely decorative (no collision, never fellable),
+// scattered thin through the wood so the ground under the canopy doesn't
+// read as bare grass.
+const CLUTTER = { bramble: 17, mushroom: 29 };
 
 // Fence pieces for a palisade border.
 const FENCE = { h: 45, v: 47, tl: 44, tr: 46, post: 59 };
@@ -87,6 +96,7 @@ export async function loadAtlas() {
   const tex = (idx) => at(packed, idx);
   const ground = Object.fromEntries(Object.entries(GROUND).map(([k, v]) => [k, v.map(tex)]));
   const fence = Object.fromEntries(Object.entries(FENCE).map(([k, v]) => [k, tex(v)]));
+  const clutter = Object.fromEntries(Object.entries(CLUTTER).map(([k, v]) => [k, tex(v)]));
 
   // Villager walk cycles — one sheet per direction, N frames wide.
   const dirs = ['down', 'up', 'left', 'right'];
@@ -139,7 +149,10 @@ export async function loadAtlas() {
   // The merchant shop — pixel art, so nearest-neighbor scale.
   const marketTex = await Assets.load('/assets/buildings/market.png');
   marketTex.source.scaleMode = 'nearest';
-  const images = { church: churchTex, market: marketTex };
+  // Watchtower — the anchor a wood/stone wall spans between (walls rework).
+  const towerTex = await Assets.load('/assets/buildings/tower.png');
+  towerTex.source.scaleMode = 'linear';
+  const images = { church: churchTex, market: marketTex, tower: towerTex };
 
   // Crop tiles for farm fields (ArMM overworld, CC0). Tilled-dirt based, so
   // they sit inside a Kenney grass-edged border and never touch grass directly
@@ -175,5 +188,5 @@ export async function loadAtlas() {
     edge: armmTile(19, 8),
   };
 
-  return { tex, ground, trees: TREES, clusters: CLUSTERS, fence, walk, oreTex, oreTexByKind, boulderTex, images, crops, farmDirt, cropOrder: ['greens', 'grain', 'roots'], anims: { barracks: barracksFrames }, RECIPES, PROP, HOUSE_OF, water };
+  return { tex, ground, trees: TREES, clusters: CLUSTERS, clutter, fence, walk, oreTex, oreTexByKind, boulderTex, images, crops, farmDirt, cropOrder: ['greens', 'grain', 'roots'], anims: { barracks: barracksFrames }, RECIPES, PROP, HOUSE_OF, water };
 }

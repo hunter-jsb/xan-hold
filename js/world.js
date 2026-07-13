@@ -48,6 +48,7 @@ function scanNeighborhood(sx, sy, r) {
     cradle: 0, agraria: 0, tundra: 0, marsh: 0, lake: 0, sea: 0, glacier: 0,
     salt: 0, salinity: 0, riverMax: 0, road: 0, fertility: 0,
     dens: 0, nests: 0, rookeries: 0, volcanoes: 0, passes: 0,
+    temp: 0, tempW: 0, // running weighted sum of °C + its weight — meaned below
     rock: {},
   };
   for (let dy = -r; dy <= r; dy++) {
@@ -63,6 +64,7 @@ function scanNeighborhood(sx, sy, r) {
       const wgt = 1 / d;
       t.salt += (W.salt[i] || 0) * wgt;
       t.salinity += (W.salinity[i] || 0) * wgt;
+      t.temp += (W.temp[i] || 0) * wgt; t.tempW += wgt; // the sim's per-cell °C — the temp LAYER, read here
       t.riverMax = Math.max(t.riverMax, W.river[i] || 0);
       t.road += ROAD[i] ? wgt : 0;
       t.rock[W.rock[i]] = (t.rock[W.rock[i]] || 0) + 1;
@@ -89,7 +91,21 @@ function scanNeighborhood(sx, sy, r) {
   }
   // River adds fertility (alluvium) and a little sea proxy for fishing.
   if (t.riverMax > 0) t.fertility += Math.min(2, t.riverMax * 0.25);
+  // Mean climate over the hinterland (inverse-distance weighted, seat cell
+  // heaviest), °C — smoother than one lone cell. Falls back to the seat cell.
+  t.temp = t.tempW > 0 ? t.temp / t.tempW : (W.temp[idx(sx, sy)] || 0);
   return t;
+}
+
+// tempBandOf names a hold's climate from its mean °C — the lore word behind
+// `warmth`, and (soon) how fast its food turns. The continent's seats span
+// ~0–15°C, so the bands below spread the real range, not a global scale.
+function tempBandOf(c) {
+  if (c < 2) return 'frigid';
+  if (c < 7) return 'cold';
+  if (c < 12) return 'temperate';
+  if (c < 16) return 'warm';
+  return 'sweltering';
 }
 
 // The six things a hold can gather. Each maps to a local signal.
@@ -117,6 +133,13 @@ function deriveHold(seat) {
   };
   const setting = dominantSetting(n);
 
+  // Climate, from the sim's temp layer (soil/air °C at this kya, meaned over
+  // the hinterland). `warmth` 0..1 is the gameplay-facing signal — 0°C-and-
+  // below reads frozen (stores keep), ~20°C reads hot (stores turn fast) — so
+  // the engine can scale food spoilage by it without touching raw °C.
+  const warmth = clamp01(n.temp / 20);
+  const tempBand = tempBandOf(n.temp);
+
   const danger = clamp01((n.dens * 0.28 + n.nests * 0.18 + n.rookeries * 0.12 + n.volcanoes * 0.06)
     + (seat.pressure || 0) / 40);
 
@@ -135,7 +158,8 @@ function deriveHold(seat) {
     realmCrown: realm ? realm.isCrown : false,
     region: setting,
     elev: Math.round(W.elev[cell] || 0),
-    temp: Math.round((W.temp[cell] || 0) * 10) / 10,
+    temp: Math.round(n.temp * 10) / 10, // regional mean °C (see scanNeighborhood)
+    warmth, tempBand,
     rich, danger, n,
     nearby: nearbyFeatures(+seat.x, +seat.y),
     blurb: holdBlurb(seat, tierName, rich, danger, n),
@@ -177,7 +201,8 @@ function holdBlurb(seat, tierName, rich, danger, n) {
   }[tierName] || 'a settled hold';
   const richWord = { food: 'good ground and water', timber: 'deep forest', stone: 'stone and crag', ore: 'ore in the rock', salt: 'salt in the earth', coin: 'roads and trade' }[top];
   const dangerWord = danger > 0.55 ? ' Dragons roost close — it will bleed.' : danger > 0.25 ? ' The wilds press at it.' : ' The country around is quiet.';
-  return `${seat.name} is ${tierLore}, held by ${anc}. Its wealth is ${richWord}.${dangerWord}`;
+  const climateWord = { frigid: ' The air runs frigid; little keeps but little spoils.', cold: ' The air runs cold, and stores keep well.', temperate: '', warm: ' The air runs warm — stores must be salted or turn.', sweltering: ' The heat is heavy; food turns fast without salt.' }[tempBandOf(n.temp)];
+  return `${seat.name} is ${tierLore}, held by ${anc}. Its wealth is ${richWord}.${dangerWord}${climateWord}`;
 }
 
 function clamp01(v) { return Math.max(0, Math.min(1, v)); }

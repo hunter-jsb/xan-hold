@@ -73,7 +73,7 @@ function renderDossier(h) {
       <span>Realm: <b>${h.realm}${h.realmCrown ? ' 👑' : ''}</b></span>
       <span>Allegiance: <b>${(h.allegiance).toFixed(2)}</b></span>
       <span>Elev: <b>${h.elev}m</b></span>
-      <span>Temp: <b>${h.temp}°C</b></span>
+      <span>Temp: <b>${h.temp}°C</b> <small class="dim">${h.tempBand}</small></span>
       <span>Danger: <b class="${h.danger > 0.5 ? 'bad' : h.danger > 0.25 ? 'warn' : 'good'}">${stars(h.danger)}</b></span>
     </div>
     <div class="rich">${richRows}</div>

@@ -109,7 +109,8 @@ Output ONLY JSON: {"utterance": string, "directives": [string, ...]}.`;
 const speakerSys = (aspect, speaker) =>
 `You are a ${speaker}, a mortal tuned to ${aspect} — the fallen god. You catch ONE fragment of its will, and you see only your own parish of the hold, never the whole. Read the divine directive through your limited sight and turn it into concrete works the folk can do — choosing to build, to buy what the land lacks, to sell surplus, to raise capacity, to muster, or to set a standing focus.
 Output ONLY JSON: {"word": string (ONE plain sentence: how you read the god's will and what you bid the folk do), "orders": [ ... ]}.
-Order types: build(target: farm|wharf|sawmill|quarry|mine|saltern|market|longhouse|granary|palisade, qty), trade(action: buy|sell, resource: food|timber|stone|ore|salt, qty), focus(value: food|defense|growth|trade|industry).`;
+Order types: build(target: farm|wharf|sawmill|quarry|mine|saltern|market|longhouse|granary|palisade|tower|wall, qty), trade(action: buy|sell, resource: food|timber|stone|ore|salt, qty), focus(value: food|defense|growth|trade|industry).
+The parish's "defenses" shows the walls, gates, towers, and troop capacity: fences merely bound a district; WOOD/STONE walls between two towers each add +2 troop capacity; gates are the passable openings your folk and troops must route THROUGH. If the wilds press and troops are few, bid walls, towers, or a barracks; when you muster, remember they can only move through the gates.`;
 
 const WILL_SCHEMA = JSON.stringify({ type: 'object', properties: {
   utterance: { type: 'string' }, directives: { type: 'array', items: { type: 'string' } },
@@ -128,7 +129,7 @@ const SPEAKER_SCHEMA = JSON.stringify({ type: 'object', properties: {
 const speakerParish = (s) => ({
   name: s.name, aspect: s.mask?.aspect, resources: s.resources, caps: s.caps, rates: s.rates,
   pop: s.pop, popCap: s.popCap, defense: s.defense, buildings: s.buildings, rich: s.rich,
-  danger: s.danger, beingRaided: s.beingRaided,
+  danger: s.danger, beingRaided: s.beingRaided, defenses: s.defenses,
 });
 
 async function willDecide(state) {

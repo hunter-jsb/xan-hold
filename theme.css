@@ -1,0 +1,26 @@
+/* theme.css — shared design tokens for every screen (founding + town), so
+   the seat-picker and the in-game HUD read as one continuous look instead
+   of two screens that happen to both be dark. style.css and town.css both
+   load this first and build on top of it. */
+:root {
+  --bg: #0d1014; --bg-rgb: 13, 16, 20; --bg2: #151a20; --panel: #1b2129; --line: #2a323c;
+  --ink: #f2ecdd; --dim: #b3a98f;
+  --gold: #ffd479; --good: #7fd18b; --warn: #e6b155; --bad: #e5736b; --accent: #7fa8d1;
+
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+  --serif: "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+
+  /* HUD overlay surfaces: named opacity tiers instead of ad hoc rgba() per rule */
+  --overlay: rgba(var(--bg-rgb), .6);         /* resting chips/panels over the map */
+  --overlay-strong: rgba(var(--bg-rgb), .88); /* hover/pinned state, tooltips */
+  --modal: rgba(var(--bg-rgb), .96);          /* near-opaque modal/popout body */
+  --field: rgba(var(--bg-rgb), .95);          /* text input surface */
+  --scrim: rgba(var(--bg-rgb), .72);          /* full-page backdrop behind a modal */
+
+  /* the gold frame: one "this is a card" signal, at two strengths */
+  --frame: rgba(255, 212, 121, .35);      /* outer edge of a panel/popout/tooltip */
+  --frame-soft: rgba(255, 212, 121, .18); /* divider inside an already-framed surface */
+
+  /* neutral dividers (inside chips/tooltips where a gold edge would be too loud) */
+  --divider: rgba(255, 255, 255, .12);
+}

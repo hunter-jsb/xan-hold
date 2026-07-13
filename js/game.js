@@ -15,10 +15,19 @@ const CFG = {
   faithPerSpeaker: 0.4,   // faith/s each speaker (1 base + 1/reliquary) wells up
   faithBase: 60,          // faithThreshold() floor (at 1 speaker)
   faithPerSpeakerThresh: 40, // faithThreshold() rise per speaker
-  baseCaps: { food: 500, timber: 400, stone: 300, ore: 250, salt: 200, coin: 1e9 },
+  dayMs: 240000,          // a full day/night in real ms — SHARED with town.js (daylight drives food spoilage + the night overlay)
+  // Food spoilage: stored food turns, faster when warm (main), in daylight, and
+  // piled on the ground (unsheltered by storehouses). Salt preserves most of it.
+  foodSpoilMax: 0.0004,   // full-severity fraction of the food pile lost per second
+  saltPreserveMax: 0.85,  // salt can prevent at most this fraction of a spoil (can't perfectly keep)
+  saltPerFood: 0.2,       // salt spent to preserve one unit of food
+  // Food is five categories now (see FOOD); each stores on its own. Staples keep
+  // deeper stores than perishables. Timber/stone/ore/salt unchanged.
+  baseCaps: { grain: 260, roots: 220, greens: 150, fruit: 150, fish: 130, timber: 400, stone: 300, ore: 250, salt: 200, coin: 1e9 },
   // Market base coin-price per unit; buying a good you lack is dear,
-  // selling one you're rich in is how a hold earns coin.
-  basePrice: { food: 0.5, timber: 0.6, stone: 1.1, ore: 1.6, salt: 1.8 },
+  // selling one you're rich in is how a hold earns coin. Fruit is the dearest
+  // food (wine/olives read as a luxury); fish/greens cheap and perishable.
+  basePrice: { grain: 0.5, roots: 0.5, greens: 0.45, fruit: 0.75, fish: 0.55, timber: 0.6, stone: 1.1, ore: 1.6, salt: 1.8 },
   tradeLot: 10,
 };
 
@@ -52,6 +61,71 @@ const BUILDINGS = [
     cost: { timber: 20, stone: 16, ore: 6 }, desc: 'Garrison and drill-yard — houses soldiers and strengthens the hold’s martial readiness.' },
 ];
 const BY_ID = Object.fromEntries(BUILDINGS.map((b) => [b.id, b]));
+
+// ---- food: categories + specific crops ---------------------------------
+// Food is no longer one pooled good. Farms grow a SPECIFIC crop (climate-gated,
+// see CROPS/cropSuit), but every crop STORES, TRADES, SPOILS, and FEEDS as one
+// of these five CATEGORIES — so the economy stays ~5 food goods while the field
+// itself is as varied as the land. `spoil` is the category's perishability
+// (multiplies the temp/sun/ground rate in stepSpoilage): staples keep, fresh
+// things turn. (Storage caps + market prices live in CFG.baseCaps/basePrice
+// alongside the other goods, keyed by these same category names.)
+const FOOD = {
+  grain:  { name: 'Grain',  spoil: 0.6 },
+  roots:  { name: 'Roots',  spoil: 0.7 },
+  greens: { name: 'Greens', spoil: 1.15 },
+  fruit:  { name: 'Fruit',  spoil: 1.3 },
+  fish:   { name: 'Fish',   spoil: 1.7 },
+};
+const FOOD_CATS = Object.keys(FOOD); // ['grain','roots','greens','fruit','fish']
+// The order the folk eat in — most-perishable first, so the larder burns fish
+// and greens before they rot and keeps grain as the reserve.
+const EAT_ORDER = FOOD_CATS.slice().sort((a, b) => FOOD[b].spoil - FOOD[a].spoil);
+
+// CROPS — the specific things a farm can grow. Each thrives at a `peak` warmth
+// (0..1, hold.warmth) and falls off over `band`; `water` is how much river/
+// lake/coast it wants (rice, melons); `cat` is the food category it fills;
+// `yield` scales its output. A hold is only OFFERED crops its climate + water
+// actually support (cropSuit ≥ a floor), so a frigid march and a warm reach
+// farm nothing alike. Fish isn't grown — it comes off the wharf.
+const CROPS = [
+  { id: 'barley',   name: 'Barley',   cat: 'grain',  peak: 0.15, band: 0.55, water: 0,    yield: 1.0 },
+  { id: 'rye',      name: 'Rye',      cat: 'grain',  peak: 0.20, band: 0.55, water: 0,    yield: 0.9 },
+  { id: 'oats',     name: 'Oats',     cat: 'grain',  peak: 0.28, band: 0.5,  water: 0.15, yield: 0.95 },
+  { id: 'wheat',    name: 'Wheat',    cat: 'grain',  peak: 0.5,  band: 0.42, water: 0.1,  yield: 1.1 },
+  { id: 'spelt',    name: 'Spelt',    cat: 'grain',  peak: 0.45, band: 0.45, water: 0,    yield: 0.95 },
+  { id: 'millet',   name: 'Millet',   cat: 'grain',  peak: 0.7,  band: 0.42, water: 0,    yield: 1.0 },
+  { id: 'sorghum',  name: 'Sorghum',  cat: 'grain',  peak: 0.82, band: 0.4,  water: 0,    yield: 0.95 },
+  { id: 'rice',     name: 'Rice',     cat: 'grain',  peak: 0.85, band: 0.35, water: 0.6,  yield: 1.25 },
+  { id: 'turnips',  name: 'Turnips',  cat: 'roots',  peak: 0.15, band: 0.55, water: 0,    yield: 1.0 },
+  { id: 'beets',    name: 'Beets',    cat: 'roots',  peak: 0.25, band: 0.5,  water: 0,    yield: 0.95 },
+  { id: 'parsnips', name: 'Parsnips', cat: 'roots',  peak: 0.4,  band: 0.45, water: 0,    yield: 0.95 },
+  { id: 'carrots',  name: 'Carrots',  cat: 'roots',  peak: 0.48, band: 0.45, water: 0.1,  yield: 1.0 },
+  { id: 'yams',     name: 'Yams',     cat: 'roots',  peak: 0.75, band: 0.4,  water: 0.2,  yield: 1.05 },
+  { id: 'kale',     name: 'Kale',     cat: 'greens', peak: 0.15, band: 0.5,  water: 0,    yield: 0.9 },
+  { id: 'cabbage',  name: 'Cabbage',  cat: 'greens', peak: 0.22, band: 0.48, water: 0.1,  yield: 1.0 },
+  { id: 'peas',     name: 'Peas',     cat: 'greens', peak: 0.45, band: 0.42, water: 0.1,  yield: 0.95 },
+  { id: 'beans',    name: 'Beans',    cat: 'greens', peak: 0.5,  band: 0.42, water: 0,    yield: 1.0 },
+  { id: 'onions',   name: 'Onions',   cat: 'greens', peak: 0.5,  band: 0.45, water: 0,    yield: 0.9 },
+  { id: 'squash',   name: 'Squash',   cat: 'greens', peak: 0.72, band: 0.4,  water: 0.15, yield: 1.05 },
+  { id: 'apples',   name: 'Apples',   cat: 'fruit',  peak: 0.45, band: 0.4,  water: 0.1,  yield: 1.0 },
+  { id: 'pears',    name: 'Pears',    cat: 'fruit',  peak: 0.5,  band: 0.4,  water: 0.1,  yield: 0.95 },
+  { id: 'grapes',   name: 'Grapes',   cat: 'fruit',  peak: 0.68, band: 0.36, water: 0,    yield: 1.05 },
+  { id: 'olives',   name: 'Olives',   cat: 'fruit',  peak: 0.76, band: 0.35, water: 0,    yield: 1.0 },
+  { id: 'melons',   name: 'Melons',   cat: 'fruit',  peak: 0.85, band: 0.35, water: 0.25, yield: 1.1 },
+  { id: 'dates',    name: 'Dates',    cat: 'fruit',  peak: 0.92, band: 0.35, water: 0.15, yield: 1.05 },
+];
+const CROP_BY_ID = Object.fromEntries(CROPS.map((c) => [c.id, c]));
+
+// cropSuit: how well a crop grows here, 0..1 — a climate bell around its `peak`
+// warmth, times a water factor when the crop is thirsty (never fully zero on
+// water alone, so a dry rice paddy just yields poorly rather than not at all).
+function cropSuit(crop, warmth, water) {
+  const climate = Math.max(0, 1 - Math.abs(warmth - crop.peak) / crop.band);
+  if (climate <= 0) return 0;
+  const wf = crop.water > 0 ? Math.max(0.15, Math.min(1, water / crop.water)) : 1;
+  return climate * wf;
+}
 
 // STORE — localStorage when it's reachable, else an in-memory fallback.
 // A sandboxed file: origin (e.g. a flatpak browser's document portal) can
@@ -100,10 +174,11 @@ class Game {
       Object.assign(this, saved);
       this.h = hold; this.water = waterRich(hold); this.bon = bonuses(hold);
     } else {
-      this.res = { food: 60, timber: 40, stone: 18, ore: 5, salt: 3, coin: 25 };
-      // A hold starts leaning into its richest good.
+      this.res = { grain: 42, roots: 12, greens: 6, fruit: 0, fish: 0, timber: 40, stone: 18, ore: 5, salt: 3, coin: 25 };
+      // A hold starts leaning into its richest good (food richness → its staple grain).
       const top = Object.entries(hold.rich).sort((a, b) => b[1] - a[1])[0][0];
-      this.res[top] = (this.res[top] || 0) + 20;
+      const topKey = top === 'food' ? 'grain' : top;
+      this.res[topKey] = (this.res[topKey] || 0) + 20;
       this.pop = 8;
       this.lvl = {}; // no starting farm — the town breaks ground on its first one (see localSteward)
       if (hold.tierName === 'saltern') this.lvl.saltern = 1;
@@ -123,22 +198,69 @@ class Game {
     // and a crop. Seeded from the farm level so old saves migrate cleanly.
     this.farmPlots = this.farmPlots || [];
     if (this.farmPlots.length === 0 && this.level('farm') > 0) {
-      const crops = ['greens', 'grain', 'roots'];
-      for (let i = 0; i < this.level('farm'); i++) this.farmPlots.push({ size: 1, crop: crops[i % 3] });
+      for (let i = 0; i < this.level('farm'); i++) this.farmPlots.push({ size: 1, crop: this.pickCrop() });
+    }
+    this.migrateFood(); // split a pre-crop save's pooled food + retag old plot crops
+    // Spoilage read-outs (transient, for the HUD) — recomputed each tick by
+    // stepSpoilage. spoilTally counts notable turns (town.js mirrors it to the
+    // on-screen chronicle, like raids); _spoilAccrue banks small losses toward
+    // the next log line.
+    this.spoilLast = 0; this.spoilSaltLast = 0;
+    this.spoilTally = 0; this._spoilAccrue = 0;
+  }
+
+  // ---- crops + food totals -------------------------------------------
+  // pickCrop chooses what a new field grows: a weighted-random draw over the
+  // crops this hold's climate + water actually suit (cropSuit ≥ 0.2), weighted
+  // BY suitability so its fields read as a varied-but-climate-true spread rather
+  // than a monoculture of the single best crop. `preferCat` biases toward one
+  // food category (used when migrating an old save's category-named plot).
+  pickCrop(preferCat) {
+    const w = this.h.warmth, water = this.water;
+    let pool = CROPS.map((c) => ({ c, s: cropSuit(c, w, water) })).filter((x) => x.s >= 0.2 && (!preferCat || x.c.cat === preferCat));
+    if (!pool.length) pool = CROPS.map((c) => ({ c, s: Math.max(0.02, cropSuit(c, w, water)) })).filter((x) => !preferCat || x.c.cat === preferCat);
+    if (!pool.length) pool = CROPS.map((c) => ({ c, s: Math.max(0.02, cropSuit(c, w, water)) }));
+    const tot = pool.reduce((a, x) => a + x.s, 0) || 1;
+    let r = Math.random() * tot;
+    for (const x of pool) { if ((r -= x.s) <= 0) return x.c.id; }
+    return pool[0].c.id;
+  }
+  // viableCrops: every crop the land supports well enough to be worth planting.
+  viableCrops() {
+    const w = this.h.warmth, water = this.water;
+    return CROPS.filter((c) => cropSuit(c, w, water) >= 0.2);
+  }
+  foodTotal() { let s = 0; for (const c of FOOD_CATS) s += (this.res[c] || 0); return s; }
+  foodCapTotal() { const caps = this.caps(); let s = 0; for (const c of FOOD_CATS) s += (caps[c] || 0); return s; }
+  foodRateTotal(rate) { let s = 0; for (const c of FOOD_CATS) s += (rate[c] || 0); return s; }
+  // migrateFood normalizes an old save: a single pooled res.food → the five
+  // categories (staples-heavy), and any plot still tagged with an old CATEGORY
+  // name (greens/grain/roots) → a specific crop of that category, climate-suited.
+  migrateFood() {
+    if (this.res.food != null && this.res.grain == null) {
+      const f = this.res.food; delete this.res.food;
+      this.res.grain = (this.res.grain || 0) + f * 0.5; this.res.roots = f * 0.2;
+      this.res.greens = f * 0.15; this.res.fish = f * 0.15;
+    }
+    for (const c of FOOD_CATS) if (this.res[c] == null) this.res[c] = 0;
+    for (const p of (this.farmPlots || [])) {
+      if (!CROP_BY_ID[p.crop]) p.crop = this.pickCrop(p.crop === 'greens' || p.crop === 'roots' ? p.crop : 'grain');
     }
   }
 
   // newFarm builds a fresh field (its own plot), optionally of a chosen crop —
-  // the alternative to expanding an existing one.
+  // the alternative to expanding an existing one. Default crop is climate-picked.
   newFarm(crop) {
     if (!this.build('farm')) return false; // pays build cost, raises farm level
-    const crops = ['greens', 'grain', 'roots'];
-    this.farmPlots.push({ size: 1, crop: crop || crops[this.farmPlots.length % 3] });
+    this.farmPlots.push({ size: 1, crop: crop || this.pickCrop() });
     return true;
   }
 
   // expandFarm grows the smallest not-yet-maxed field in place — cheaper than a
   // new farm but its yield still rises. Returns the plot index, or -1.
+  // Does NOT touch lvl.farm: that's a worksite count (jobs()/roleWeights read
+  // it as "how many farmer jobs exist"), and a field getting bigger in place
+  // isn't a new worksite — only newFarm() (a real new field) should raise it.
   expandFarm() {
     const MAX = 3;
     let cand = null;
@@ -148,7 +270,6 @@ class Game {
     if (!Object.entries(cost).every(([k, v]) => this.res[k] >= v)) return -1;
     for (const [k, v] of Object.entries(cost)) this.res[k] -= v;
     cand.size += 1;
-    this.lvl.farm = this.level('farm') + 1; // a bigger field feeds more
     return this.farmPlots.indexOf(cand);
   }
   expandCost(plot) { return { timber: Math.ceil(8 * plot.size), coin: Math.ceil(5 * plot.size) }; }
@@ -215,7 +336,7 @@ class Game {
     return { base, contributors, total: this.popCap() };
   }
 
-  defense() { return this.level('palisade') * BY_ID.palisade.def + this.bon.defBonus; }
+  defense() { return this.level('palisade') * BY_ID.palisade.def + this.level('barracks') * BY_ID.barracks.def + this.bon.defBonus; }
 
   // speakers — how many voices the hold's shrines give the fallen god: one
   // always present, plus one more per reliquary raised.
@@ -256,28 +377,113 @@ class Game {
     return out;
   }
 
-  // production per second, per resource, at current efficiency & pop.
+  // production per second, per resource, at current efficiency & pop. Food is
+  // five categories: FARMS grow per-plot (each plot's crop → its category,
+  // scaled by how well the climate suits that crop AND the soil's fertility),
+  // and WHARVES land fish. Everything else is the flat level×richness output.
   rates() {
     const eff = this.efficiency();
-    const out = { food: 0, timber: 0, stone: 0, ore: 0, salt: 0, coin: 0 };
+    const out = { grain: 0, roots: 0, greens: 0, fruit: 0, fish: 0, timber: 0, stone: 0, ore: 0, salt: 0, coin: 0 };
+    const fMul = this.bon.mul.food, fertile = 0.35 + 0.65 * (this.h.rich.food || 0);
+    for (const p of this.farmPlots) {
+      const crop = CROP_BY_ID[p.crop];
+      if (!crop) continue;
+      const suit = cropSuit(crop, this.h.warmth, this.water);
+      out[crop.cat] += BY_ID.farm.base * (p.size || 1) * crop.yield * suit * fertile * eff * fMul;
+    }
+    const wl = this.level('wharf');
+    if (wl) out.fish += BY_ID.wharf.base * wl * (0.35 + 0.65 * this.water) * eff * fMul;
     for (const b of BUILDINGS) {
-      if (b.kind !== 'prod') continue;
+      if (b.kind !== 'prod' || b.id === 'farm' || b.id === 'wharf') continue;
       const lv = this.level(b.id);
       if (!lv) continue;
-      const r = this.richOf(b);
-      out[b.res] += b.base * lv * (0.35 + 0.65 * r) * eff * this.bon.mul[b.res];
+      out[b.res] += b.base * lv * (0.35 + 0.65 * this.richOf(b)) * eff * this.bon.mul[b.res];
     }
     return out;
   }
 
   foodEatPerS() { return this.pop * CFG.foodPerPop * this.bon.foodEat; }
 
+  // ---- food spoilage -------------------------------------------------
+  // daylight: the same 0..1 curve town.js paints the night overlay from (noon=1,
+  // midnight=0), computed from the shared day clock so the "food spoils in the
+  // sun" factor tracks exactly what's on screen. Offline there's no single
+  // moment to read, so we use the daily average (0.5) — catch-up spans whole
+  // days anyway.
+  dayFrac() { return (Date.now() % CFG.dayMs) / CFG.dayMs; }
+  daylight(offline = false) { return offline ? 0.5 : 0.5 + 0.5 * Math.sin((this.dayFrac() - 0.25) * 2 * Math.PI); }
+
+  // foodOnGround: the fraction of ALL stored food that no storehouse can shelter
+  // — food beyond the sheds' added capacity (summed across the five categories)
+  // is piled in the open (full ground penalty). With no storehouse all of it is
+  // on the ground (1.0); enough sheds to cover the pile drops it toward 0.
+  foodOnGround() {
+    const food = this.foodTotal();
+    if (food <= 0) return 0;
+    let shelter = 0;
+    for (const c of FOOD_CATS) { const cb = this.capBreakdown(c); shelter += cb.total - cb.base; }
+    return Math.max(0, food - shelter) / food;
+  }
+
+  // stepSpoilage turns some of the stored food each tick, PER CATEGORY, and
+  // returns the total lost. The temp/sun/ground severity is SHARED (TEMP gates:
+  // frigid 0.2 → hot 1.0; SUN + GROUND are exposure on top, sheltered-night ×0.5
+  // → open-noon ×1.0), and each category multiplies it by its OWN perishability
+  // (FOOD[c].spoil — grain keeps, fish rots). Times each pile, so hoarding the
+  // perishables hurts most. Salt then preserves the same fraction of every
+  // category's loss, bounded by the salt on hand; a hold with no salt eats it
+  // all. Frozen + night + sheltered ≈ nothing; warm + noon + fish on the ground
+  // turns fastest.
+  stepSpoilage(dt, offline = false) {
+    this.spoilLast = 0; this.spoilSaltLast = 0; this.spoilByCat = {};
+    const total = this.foodTotal();
+    if (total <= 0) return 0;
+    const warmth = Math.max(0, Math.min(1, this.h.warmth || 0));
+    const sun = this.daylight(offline), ground = this.foodOnGround();
+    const gate = 0.2 + 0.8 * warmth;                 // climate susceptibility (frigid → hot)
+    const exposure = 0.5 + 0.3 * sun + 0.2 * ground; // sheltered-night 0.5 → open-noon 1.0
+    const sev = Math.min(1, gate * exposure);        // shared across categories
+    const gross = {}; let grossTot = 0;
+    for (const c of FOOD_CATS) {
+      const f = this.res[c] || 0; if (f <= 0) continue;
+      const g = f * CFG.foodSpoilMax * sev * FOOD[c].spoil * dt;
+      if (g > 0) { gross[c] = g; grossTot += g; }
+    }
+    if (grossTot <= 0) return 0;
+    // salt preserves the SAME fraction of every category's loss (cap + stock bound)
+    const preserveFrac = Math.min(CFG.saltPreserveMax, ((this.res.salt || 0) / CFG.saltPerFood) / grossTot);
+    const saltSpent = grossTot * preserveFrac * CFG.saltPerFood;
+    if (saltSpent > 0) this.res.salt = Math.max(0, this.res.salt - saltSpent);
+    let spoiledTot = 0;
+    for (const c of FOOD_CATS) {
+      const g = gross[c]; if (!g) { this.spoilByCat[c] = 0; continue; }
+      const sp = g * (1 - preserveFrac);
+      this.res[c] = Math.max(0, this.res[c] - sp);
+      this.spoilByCat[c] = sp / dt; spoiledTot += sp;
+    }
+    this.spoilLast = spoiledTot / dt;
+    this.spoilSaltLast = saltSpent / dt;
+    // Chronicle a real batch turning (live only — offline is summarized by
+    // catchUp). Bank small losses until they're worth a line, naming the biggest
+    // factor and the food that turned most.
+    if (!offline && spoiledTot > 0) {
+      this._spoilAccrue = (this._spoilAccrue || 0) + spoiledTot;
+      if (this._spoilAccrue >= 20) {
+        const reason = warmth >= sun && warmth >= ground ? 'the heat' : sun >= ground ? 'the sun' : 'the bare ground';
+        const worst = FOOD_CATS.reduce((a, c) => (this.spoilByCat[c] || 0) > (this.spoilByCat[a] || 0) ? c : a, FOOD_CATS[0]);
+        this.pushLog(`${FOOD[worst].name} turned in ${reason} — ${Math.round(this._spoilAccrue)} food lost.`, 'spoil');
+        this.spoilTally += 1; this._spoilAccrue = 0;
+      }
+    }
+    return spoiledTot;
+  }
+
   // ---- trade ---------------------------------------------------------
   // A Market turns the hold's surplus into coin and coin into the goods
   // its land can't yield — the loop that keeps a stone-poor forest hall
   // or an ore-rich frontier alive.
   tradeUnlocked() { return this.level('market') > 0; }
-  localRich(res) { return res === 'coin' ? 0 : (this.h.rich[res] || 0); }
+  localRich(res) { return res === 'coin' ? 0 : (FOOD[res] ? (this.h.rich.food || 0) : (this.h.rich[res] || 0)); }
   buyPrice(res) { return Math.max(1, Math.ceil(CFG.basePrice[res] * (1.6 - 0.9 * this.localRich(res)))); }
   sellPrice(res) { return Math.max(1, Math.floor(CFG.basePrice[res] * (0.5 + 0.05 * this.level('market')) * (1.2 - 0.5 * this.localRich(res)))); }
 
@@ -304,17 +510,25 @@ class Game {
     for (const k of Object.keys(rate)) {
       this.res[k] = Math.min(caps[k], (this.res[k] || 0) + rate[k] * dt);
     }
-    // Food is eaten; surplus feeds growth, deficit eats the store then folk.
-    const eat = this.foodEatPerS() * dt;
-    this.res.food -= eat;
-    const netFood = rate.food * dt - eat;
-    if (this.res.food < 0) {
-      // Starvation: clear the debt in people.
-      this.res.food = 0;
-      this.pop = Math.max(3, this.pop - 0.05 * this.pop * dt);
+    // Stored food turns (temp/sun/ground, salt preserves) before the folk eat.
+    const spoiled = this.stepSpoilage(dt, offline);
+    // The folk eat PERISHABLE-FIRST (burn fish/greens before they rot; grain is
+    // the reserve). Hunger left after the whole larder is drained = starvation.
+    const eatNeed = this.foodEatPerS() * dt;
+    let hunger = eatNeed;
+    this.eatByCat = {};
+    for (const c of EAT_ORDER) {
+      if (hunger <= 0) break;
+      const take = Math.min(this.res[c] || 0, hunger);
+      if (take > 0) { this.res[c] -= take; hunger -= take; this.eatByCat[c] = take / dt; }
+    }
+    // Growth needs a real food surplus: total production this tick, less what
+    // was actually eaten and what spoiled (no free floor; capped so a food-rich
+    // hold can't breed explosively; housing/popCap is the ceiling).
+    const netFood = this.foodRateTotal(rate) * dt - (eatNeed - hunger) - spoiled;
+    if (hunger > 1e-9) {
+      this.pop = Math.max(3, this.pop - 0.05 * this.pop * dt); // the larder ran dry
     } else if (this.pop < this.popCap()) {
-      // Growth needs a real food surplus (no free floor) and is capped so a
-      // food-rich hold can't breed explosively; housing (popCap) is the ceiling.
       const surplus = Math.min(3, Math.max(0, netFood));
       this.pop = Math.min(this.popCap(), this.pop + CFG.popGrowth * surplus * dt);
     }
@@ -347,8 +561,10 @@ class Game {
     const mit = Math.max(0.2, 1 - this.defense() * 0.2);
     const bite = this.h.danger * mit;
     const taken = {};
-    // A raid falls on one or two kinds of stores, not everything at once.
-    for (const k of ['food', 'salt', 'ore', 'coin']) {
+    // A raid falls on one or two kinds of stores, not everything at once —
+    // for food it's the biggest granary (raiders take the fattest pile).
+    const foodTarget = FOOD_CATS.reduce((a, c) => (this.res[c] || 0) > (this.res[a] || 0) ? c : a, FOOD_CATS[0]);
+    for (const k of [foodTarget, 'salt', 'ore', 'coin']) {
       if (Math.random() > 0.5) continue;
       const loss = Math.floor(this.res[k] * bite * (0.1 + Math.random() * 0.14));
       if (loss > 0) { this.res[k] -= loss; taken[k] = loss; }
@@ -413,5 +629,5 @@ class Game {
   static abandon(id) { STORE.del('xanhold:' + id); }
 }
 
-window.XANGAME = { Game, BUILDINGS, BY_ID, CFG };
+window.XANGAME = { Game, BUILDINGS, BY_ID, CFG, FOOD, FOOD_CATS, CROPS, CROP_BY_ID, cropSuit };
 })();
