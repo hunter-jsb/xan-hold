@@ -4,8 +4,9 @@
 // heuristic keeps building, and when faith crests (or on `p`) the Divine Will
 // at /will returns terse directives its speakers turn into orders + an
 // in-world chronicle. Nothing here writes back to the sim.
-import { Application, Container, Graphics, Sprite, Texture } from 'pixi.js';
+import { Application, Container, Graphics, Sprite, Texture, AnimatedSprite } from 'pixi.js';
 import { loadAtlas, TILE } from './atlas.js';
+import { goTo } from './pathfind.js';
 import { TOWN_W, TOWN_H, CENTER_TX, CENTER_TY, DAY_MS, STEWARD_MS, LOCAL_MS, ROLE_LABEL, HIGHLIGHT_COLOR, BUILD_NAME } from './constants.js';
 import { S, heldKeys } from './state.js';
 import { loadWalls } from './walls.js';
@@ -262,6 +263,41 @@ function discoveryBurst() {
   }
 }
 
+// ---- trade caravans -------------------------------------------------
+// When the hold trades, a caravan (a gold trader hauling a crate) trundles
+// between a market and a map edge — routed through the gates by findPath — so
+// the economy's trade reads on screen. Spawned (throttled) off game.tradeTally.
+function spawnCaravan() {
+  const market = [...S.placed.entries()].find(([k]) => k.startsWith('market#'));
+  const mc = market && market[1].container;
+  const mx = mc ? mc.x + TILE : CENTER_TX * TILE, my = mc ? mc.y + TILE : CENTER_TY * TILE;
+  const edge = [[Math.random() * TOWN_W, 0], [Math.random() * TOWN_W, TOWN_H - 1], [0, Math.random() * TOWN_H], [TOWN_W - 1, Math.random() * TOWN_H]][Math.floor(Math.random() * 4)];
+  const ex = edge[0] * TILE, ey = edge[1] * TILE, out = Math.random() < 0.5; // departing or arriving
+  const c = new Container();
+  const a = new AnimatedSprite(S.atlas.walk.down); a.anchor.set(0.5, 1); a.animationSpeed = 0.12; a.tint = 0xf2c14e; a.play();
+  const crate = new Sprite(S.atlas.tex(106)); crate.anchor.set(0.5, 1); crate.scale.set(0.7); crate.x = 3; crate.y = -18;
+  c.addChild(a, crate); c.anim = a;
+  c.x = out ? mx : ex; c.y = out ? my : ey; c.zIndex = c.y; c.dir = 'down';
+  S.entities.addChild(c);
+  goTo(c, out ? ex : mx, out ? ey : my);
+  if (!S.caravans) S.caravans = [];
+  S.caravans.push(c);
+}
+function killCaravan(c) { c.dead = true; S.entities.removeChild(c); c.destroy({ children: true }); }
+function stepCaravan(dt) {
+  if (!S.caravans || !S.caravans.length) return;
+  for (const c of S.caravans) {
+    if (c.dead) continue;
+    if (!c.path || !c.path.length) { killCaravan(c); continue; } // arrived (or no route) → gone
+    const wp = c.path[0], dx = wp.x - c.x, dy = wp.y - c.y, d = Math.hypot(dx, dy), sp = 22 * dt;
+    if (d < sp) { c.x = wp.x; c.y = wp.y; c.path.shift(); } else { c.x += (dx / d) * sp; c.y += (dy / d) * sp; }
+    c.zIndex = c.y;
+    const dir = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up');
+    if (dir !== c.dir) { c.dir = dir; c.anim.textures = S.atlas.walk[dir]; c.anim.play(); }
+  }
+  S.caravans = S.caravans.filter((c) => !c.dead);
+}
+
 // divinePulse — golden rings ripple out from the reliquaries (or the keep if
 // none) when the Will speaks, so a decree is a divine MOMENT on screen.
 function divinePulse() {
@@ -314,6 +350,7 @@ function onFrame(ticker) {
   for (const v of S.villagers) stepVillager(v, dt);
   stepRaid(dt);   // advance any live raid wave (move raiders, resolve the clash)
   stepWeather(dt); // drift the seasonal snow/leaves/petals
+  stepCaravan(dt); // trundle any trade caravans between market + edge
   drawFealty();    // the faint parish threads from folk to their speaker
   // hover highlight rings: perma (v.home) vs temp (v.haulTarget) assignees of
   // S.hoverBuilding — only exist while hovering (see setHoverBuilding).
@@ -610,6 +647,10 @@ function townTick() {
   // the Will spoke since last look → a divine pulse from the shrines
   if (S.willHistory.length > (S.lastWillCount || 0)) divinePulse();
   S.lastWillCount = S.willHistory.length;
+  // the hold traded since last look → send a caravan now and then (throttled)
+  const tt = S.game.tradeTally || 0;
+  if (tt > (S.lastTradeTally || 0) && Date.now() - (S.lastCaravan || 0) > 11000) { spawnCaravan(); S.lastCaravan = Date.now(); }
+  S.lastTradeTally = tt;
   renderOrders();
   updateHUD(); // folds the Folk legend + defense into the Pop chip now
 }

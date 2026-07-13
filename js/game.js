@@ -842,12 +842,14 @@ class Game {
     if (this.res.coin < cost) return false;
     this.res.coin -= cost;
     this.res[res] = Math.min(this.caps()[res], this.res[res] + qty);
+    this.tradeTally = (this.tradeTally || 0) + 1; // town.js sends a caravan now and then
     return true;
   }
   sell(res, qty = CFG.tradeLot) {
     if (!this.tradeUnlocked() || this.res[res] < qty) return false;
     this.res[res] -= qty;
     this.res.coin += this.sellPrice(res) * qty;
+    this.tradeTally = (this.tradeTally || 0) + 1;
     return true;
   }
 
