@@ -20,12 +20,16 @@ import { wallKey, clampX, clampY } from './coords.js';
 // level number) — so unlike that ring, they need their OWN save, a sibling
 // of the economy's `xanhold:<id>` key (same "xanhold:" prefix, so `R` /
 // resetWorld's wipe already covers it for free).
+// TIER_KIND — a section wall's tier (its "level") to the tile kind it lays:
+// 1 fence, 2 wood, 3 stone. Higher tiers are real fortification (fort spans).
+export const TIER_KIND = [null, 'fence', 'wood', 'stone'];
+
 export function wallsSaveKey() { return 'xanhold:' + S.hold.id + ':walls'; }
 export function saveWalls() {
   try {
     localStorage.setItem(wallsSaveKey(), JSON.stringify({
       walls: [...S.walls], gates: [...S.gates], edges: [...S.wallEdgesBuilt],
-      kind: [...S.wallKind], towers: [...S.towers],
+      kind: [...S.wallKind], towers: [...S.towers], tier: S.sectionTier, box: S.sectionBox,
     }));
   } catch { /* private/sandboxed storage — walls just won't survive a reload */ }
 }
@@ -34,8 +38,26 @@ export function loadWalls() {
     const raw = localStorage.getItem(wallsSaveKey());
     if (!raw) return;
     const d = JSON.parse(raw);
-    S.walls = new Set(d.walls || []); S.gates = new Set(d.gates || []); S.wallEdgesBuilt = new Set(d.edges || []);
+    S.walls = new Set(d.walls || []); S.gates = new Set(d.gates || []);
+    // Edges are now keyed `${section}:${side}`; a pre-sections save has bare
+    // side names — those were all the core.
+    S.wallEdgesBuilt = new Set((d.edges || []).map((e) => e.includes(':') ? e : `core:${e}`));
     S.wallKind = new Map(d.kind || []); S.towers = new Set(d.towers || []); // pre-rework saves lack these → all fence, no towers
+    S.sectionTier = d.tier || {};
+    S.sectionBox = d.box || {};
+    // Derive the core's tier + box from its existing tiles if the save predates
+    // sections, so an upgrade re-lays the ring where it actually stands.
+    if (S.walls.size) {
+      if (S.sectionTier.core == null) {
+        const kinds = new Set([...S.wallKind.values()]);
+        S.sectionTier.core = kinds.has('stone') ? 3 : kinds.has('wood') ? 2 : 1;
+      }
+      if (!S.sectionBox.core) {
+        let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+        for (const k of S.walls) { const [tx, ty] = k.split(',').map(Number); x0 = Math.min(x0, tx); y0 = Math.min(y0, ty); x1 = Math.max(x1, tx); y1 = Math.max(y1, ty); }
+        S.sectionBox.core = { x0, y0, x1, y1 };
+      }
+    }
   } catch { /* corrupt or sandboxed — start with a clean slate */ }
 }
 
@@ -143,12 +165,31 @@ export function fortSpans() {
   return spans;
 }
 
+// fortStrength — the troop capacity fort spans grant, weighted by TIER: a wood
+// span is worth 2, a stone span 3 (stone holds more). Same tower→tower scan as
+// fortSpans, but reads whether any tile in the run is stone.
+export function fortStrength() {
+  const kindAt = (x, y) => S.wallKind.get(wallKey(x, y));
+  const isFort = (x, y) => { const k = wallKey(x, y); const t = kindAt(x, y); return S.walls.has(k) && (t === 'wood' || t === 'stone'); };
+  const isGate = (x, y) => S.gates.has(wallKey(x, y));
+  let strength = 0;
+  for (const key of S.towers) {
+    const [tx, ty] = key.split(',').map(Number);
+    for (const [dx, dy] of [[1, 0], [0, 1]]) {
+      let x = tx + dx, y = ty + dy, fort = 0, stone = false;
+      while (isFort(x, y) || isGate(x, y)) { if (isFort(x, y)) { fort++; if (kindAt(x, y) === 'stone') stone = true; } x += dx; y += dy; }
+      if (fort > 0 && S.towers.has(wallKey(x, y))) strength += stone ? 3 : 2;
+    }
+  }
+  return strength;
+}
+
 // troopCap — how many soldiers the hold can field: a base watch, the garrison a
-// barracks houses, and +2 per fort span (tower-linked wood/stone wall).
+// barracks houses, the keep's muster, and the fort walls' strength (tier-weighted).
 export function troopCap() {
   const barracks = S.game ? S.game.level('barracks') : 0;
   const keep = S.game ? Math.max(0, S.game.level('keep') - 1) : 0; // a grander keep musters more
-  return 2 + barracks * 4 + fortSpans() * 2 + keep;
+  return 2 + barracks * 4 + fortStrength() + keep;
 }
 
 // wallPieceFor picks the fence sprite + rotation for a wall tile from its

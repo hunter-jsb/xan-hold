@@ -5,7 +5,7 @@ import { S, isRaided } from './state.js';
 import { ORDER, WORK_S, MAX_ACTIVE, MAX_PER_TYPE, FOCUS, TRADE_ACT, CENTER_TX, CENTER_TY, PLOT, TOWN_W, TOWN_H } from './constants.js';
 import { startSite, startFarmSite, nextFarmPlot, wantsNewFarmField, farmFieldAvailable, mineNodeAvailable, coreRadius } from './buildings.js';
 import { wharfSiteAvailable } from './terrain.js';
-import { layWallSegment, layGate, placeTower } from './walls.js';
+import { layWallSegment, layGate, placeTower, TIER_KIND } from './walls.js';
 
 const { BUILDINGS, BY_ID } = window.XANGAME;
 
@@ -15,6 +15,7 @@ export function pushOrder(o) {
     type: o.type, target: o.target, action: o.action, resource: o.resource,
     value: o.value, qty: o.qty || 1, reason: o.reason,
     from: o.from, to: o.to, gate: o.gate,     // 'wall' orders: a segment (from/to) and/or a gate point
+    section: o.section, upgrade: o.upgrade,   // 'wall' orders: which section, and whether it's a tier upgrade
     qtyLeft: o.qty || 1, status: 'pending', progress: 0, waited: 0,
   });
 }
@@ -131,24 +132,29 @@ export function advanceOrder(a, dt) {
       return;
     }
   } else if (a.type === ORDER.WALL) {
-    // Walls cost the same materials + raise defense the old palisade LEVEL
-    // did (S.game.build/canAfford still gate it — game.js is unchanged) —
-    // only the RESULT differs: real tiles (a segment and/or a gate) land on
-    // the grid instead of an auto-ring being redrawn.
-    if (!((a.from && a.to) || a.gate)) {  // no geometry (e.g. the Will's `build palisade`) — plan the next segment ourselves
-      const seg = planDefensiveSegment();
-      if (seg) { a.from = seg.from; a.to = seg.to; a.gate = seg.gate; }
-    }
-    if (!((a.from && a.to) || a.gate)) {  // the core is fully walled already — just deepen the level and finish
-      S.game.build('palisade'); a.qtyLeft = 0;
-    } else if (S.game.build('palisade')) {
-      if (a.from && a.to) layWallSegment(a.from, a.to, a.gate);
-      else if (a.gate) layGate(a.gate);
-      a.qtyLeft -= 1; a.waited = 0;
+    // Walls cost + raise defense via the palisade level (game.js unchanged); the
+    // RESULT is real tiles. A wall order either UPGRADES a section's ring a tier,
+    // or lays the next planned segment/gate at the section's current tier kind.
+    if (a.upgrade) {
+      if (S.game.build('palisade')) { upgradeSectionWall(a.section || 'core'); a.qtyLeft = 0; }
+      else { autoFund('palisade'); a.progress = 1; a.waited += dt; if (a.waited > 16) { a.status = 'skipped'; a.doneAt = Date.now(); } return; }
     } else {
-      autoFund('palisade'); a.progress = 1; a.waited += dt;
-      if (a.waited > 16) { a.status = 'skipped'; a.doneAt = Date.now(); }
-      return;
+      if (!((a.from && a.to) || a.gate)) {  // no geometry (e.g. the Will's `build palisade`) — plan the core's next side
+        const seg = planDefensiveSegment();
+        if (seg) { a.from = seg.from; a.to = seg.to; a.gate = seg.gate; a.section = 'core'; }
+      }
+      if (!((a.from && a.to) || a.gate)) {  // fully walled already — just deepen the level and finish
+        S.game.build('palisade'); a.qtyLeft = 0;
+      } else if (S.game.build('palisade')) {
+        const kind = TIER_KIND[S.sectionTier[a.section || 'core'] || 1];
+        if (a.from && a.to) layWallSegment(a.from, a.to, a.gate, kind);
+        else if (a.gate) layGate(a.gate);
+        a.qtyLeft -= 1; a.waited = 0;
+      } else {
+        autoFund('palisade'); a.progress = 1; a.waited += dt;
+        if (a.waited > 16) { a.status = 'skipped'; a.doneAt = Date.now(); }
+        return;
+      }
     }
   }
   if (a.qtyLeft <= 0) { a.status = 'done'; a.doneAt = Date.now(); }
@@ -183,60 +189,94 @@ export function autoFund(id) {
   }
 }
 
-// planDefensiveSegment — the local heuristic's autonomous wall planner: picks
-// the next un-walled side of the CORE zone (a straight north/south/east/west
-// run just outside coreRadius, see insideCore) and a gate at its middle so
-// the folk can still reach the farmland/mines/wharfs beyond it. This wraps
-// the protected core — dwellings/stores/faith — NOT the town's whole built
-// footprint (which would swallow the outer resource works too). Cycles
-// through all four sides once each (S.wallEdgesBuilt); once all four are
-// planned locally, further walls are the Will's speakers to extend/gate.
-export function planDefensiveSegment() {
-  if (!S.usedPlots.size) return null; // nothing built yet — nowhere to wall
-  const ccx = CENTER_TX, ccy = CENTER_TY;
-  const rad = coreRadius() * PLOT + 2; // the core zone, +2 tiles clearance past its buildings
-  const x0 = Math.max(0, Math.round(ccx - rad)), y0 = Math.max(0, Math.round(ccy - rad));
-  const x1 = Math.min(TOWN_W - 1, Math.round(ccx + rad)), y1 = Math.min(TOWN_H - 1, Math.round(ccy + rad));
-  const midX = Math.round((x0 + x1) / 2), midY = Math.round((y0 + y1) / 2);
-  const sides = {
-    north: { from: { x: x0, y: y0 }, to: { x: x1, y: y0 }, gate: { x: midX, y: y0 } },
-    south: { from: { x: x0, y: y1 }, to: { x: x1, y: y1 }, gate: { x: midX, y: y1 } },
-    west: { from: { x: x0, y: y0 }, to: { x: x0, y: y1 }, gate: { x: x0, y: midY } },
-    east: { from: { x: x1, y: y0 }, to: { x: x1, y: y1 }, gate: { x: x1, y: midY } },
-  };
-  for (const [name, seg] of Object.entries(sides)) {
-    if (S.wallEdgesBuilt.has(name)) continue;
-    S.wallEdgesBuilt.add(name);
-    return seg;
+// ---- walls by section + tier ------------------------------------------
+// Walls now ring named SECTIONS, not just the core, and each walled section
+// carries a TIER — fence(1) → wood(2) → stone(3), its "level". planSectionWall
+// lays the next un-walled side of a section; upgradeSectionWall raises the whole
+// ring a tier (with corner towers, so its sides become fort spans → troop cap).
+// Section edges are tracked as `${section}:${side}` in S.wallEdgesBuilt, and a
+// section's box is locked on first plan (S.sectionBox) so an upgrade re-lays it
+// exactly in place even if coreRadius has since grown.
+
+// sectionBounds — the tile box a section's wall would enclose (fresh geometry;
+// planSectionWall locks it into S.sectionBox). null if nothing to ring yet.
+export function sectionBounds(section) {
+  const box = (x0, y0, x1, y1) => ({
+    x0: Math.max(0, Math.round(x0)), y0: Math.max(0, Math.round(y0)),
+    x1: Math.min(TOWN_W - 1, Math.round(x1)), y1: Math.min(TOWN_H - 1, Math.round(y1)),
+  });
+  if (section === 'core') {
+    if (!S.usedPlots.size) return null;
+    const rad = coreRadius() * PLOT + 2;               // core zone + clearance past its buildings
+    return box(CENTER_TX - rad, CENTER_TY - rad, CENTER_TX + rad, CENTER_TY + rad);
   }
-  return null;                    // all four sides already planned locally
+  if (section === 'farmland') {
+    if (!S.farmTiles.size) return null;
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const k of S.farmTiles.keys()) { const [tx, ty] = k.split(',').map(Number); x0 = Math.min(x0, tx); y0 = Math.min(y0, ty); x1 = Math.max(x1, tx); y1 = Math.max(y1, ty); }
+    return box(x0 - 1, y0 - 1, x1 + 1, y1 + 1);
+  }
+  if (section === 'town') {
+    if (!S.hittable.length) return null;
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const b of S.hittable) { x0 = Math.min(x0, b.x0); y0 = Math.min(y0, b.y0); x1 = Math.max(x1, b.x1); y1 = Math.max(y1, b.y1); }
+    return box(x0 - 2, y0 - 2, x1 + 2, y1 + 2);
+  }
+  return null;
 }
 
-// planFortSpan upgrades one un-fortified core side to a real fort span: a tower
-// at each corner + a wood/stone wall between (keeping the side's gate), worth +2
-// troop capacity. Prefers stone when the hold holds more of it than timber.
-export function planFortSpan() {
-  if (!S.usedPlots.size) return false;
-  const rad = coreRadius() * PLOT + 2;
-  const x0 = Math.max(0, Math.round(CENTER_TX - rad)), y0 = Math.max(0, Math.round(CENTER_TY - rad));
-  const x1 = Math.min(TOWN_W - 1, Math.round(CENTER_TX + rad)), y1 = Math.min(TOWN_H - 1, Math.round(CENTER_TY + rad));
-  const midX = Math.round((x0 + x1) / 2), midY = Math.round((y0 + y1) / 2);
-  const sides = {
-    north: [{ x: x0, y: y0 }, { x: x1, y: y0 }, { x: midX, y: y0 }],
-    south: [{ x: x0, y: y1 }, { x: x1, y: y1 }, { x: midX, y: y1 }],
-    west: [{ x: x0, y: y0 }, { x: x0, y: y1 }, { x: x0, y: midY }],
-    east: [{ x: x1, y: y0 }, { x: x1, y: y1 }, { x: x1, y: midY }],
+// sectionSides — the four wall runs (from/to + a mid gate) around a box.
+function sectionSides(b) {
+  const midX = Math.round((b.x0 + b.x1) / 2), midY = Math.round((b.y0 + b.y1) / 2);
+  return {
+    north: { from: { x: b.x0, y: b.y0 }, to: { x: b.x1, y: b.y0 }, gate: { x: midX, y: b.y0 } },
+    south: { from: { x: b.x0, y: b.y1 }, to: { x: b.x1, y: b.y1 }, gate: { x: midX, y: b.y1 } },
+    west: { from: { x: b.x0, y: b.y0 }, to: { x: b.x0, y: b.y1 }, gate: { x: b.x0, y: midY } },
+    east: { from: { x: b.x1, y: b.y0 }, to: { x: b.x1, y: b.y1 }, gate: { x: b.x1, y: midY } },
   };
-  S.fortEdges = S.fortEdges || new Set(); // not persisted — re-laying a wood side is idempotent
-  const kind = (S.game.res.stone || 0) > (S.game.res.timber || 0) ? 'stone' : 'wood';
-  for (const [name, [a, b, gate]] of Object.entries(sides)) {
-    if (S.fortEdges.has(name)) continue;
-    S.fortEdges.add(name);
-    placeTower(a.x, a.y); placeTower(b.x, b.y);
-    layWallSegment(a, b, gate, kind);
-    return true;
+}
+
+// sectionEdgesBuilt — how many of a section's four sides are planned so far.
+export function sectionEdgesBuilt(section) {
+  let n = 0; for (const k of S.wallEdgesBuilt) if (k.startsWith(section + ':')) n++;
+  return n;
+}
+
+// planSectionWall — the next un-walled side of a section as a WALL-order payload
+// (from/to/gate + section), cycling the four sides; null once the ring is closed.
+export function planSectionWall(section) {
+  let b = S.sectionBox[section];
+  if (!b) { b = sectionBounds(section); if (!b || b.x1 <= b.x0 || b.y1 <= b.y0) return null; S.sectionBox[section] = b; }
+  for (const [name, seg] of Object.entries(sectionSides(b))) {
+    const key = `${section}:${name}`;
+    if (S.wallEdgesBuilt.has(key)) continue;
+    S.wallEdgesBuilt.add(key);
+    if (!S.sectionTier[section]) S.sectionTier[section] = 1; // fence
+    return { ...seg, section };
   }
-  return false;
+  return null;
+}
+
+// planDefensiveSegment — the core's next side (the WALL handler's no-geometry
+// fallback). The core is simply the first section a hold rings.
+export function planDefensiveSegment() {
+  if (!S.usedPlots.size) return null;
+  return planSectionWall('core');
+}
+
+// upgradeSectionWall raises a walled section a tier (fence→wood→stone), re-laying
+// its ring at the sturdier kind with a tower at each corner (so each side becomes
+// a fort span → troop capacity). False if the section is unwalled or already stone.
+export function upgradeSectionWall(section) {
+  const tier = S.sectionTier[section] || 0;
+  if (tier < 1 || tier >= 3) return false;
+  const b = S.sectionBox[section] || sectionBounds(section);
+  if (!b) return false;
+  const kind = TIER_KIND[tier + 1];
+  placeTower(b.x0, b.y0); placeTower(b.x1, b.y0); placeTower(b.x0, b.y1); placeTower(b.x1, b.y1);
+  for (const seg of Object.values(sectionSides(b))) layWallSegment(seg.from, seg.to, seg.gate, kind);
+  S.sectionTier[section] = tier + 1;
+  return true;
 }
 
 // localSteward: the town's own hands. When no orders are queued it picks a
@@ -266,17 +306,30 @@ export function localSteward() {
   // Wall the core proactively as the hold grows (not only under raid): once
   // there are folk to protect, ring the core one side at a time until all four
   // are up — so a wall actually appears even when the Will is quiet.
+  // Walls, by SECTION and by TIER. First ring the core; once it's closed, ring
+  // the farmland; and as the hold prospers, UPGRADE a section's ring a tier
+  // (fence→wood→stone + corner towers → troop capacity).
+  const coreEdges = sectionEdgesBuilt('core');
   const wantWall = (isRaided() && g.defense() < 3) || S.focus === FOCUS.DEFENSE
-    || (g.pop > 6 && S.wallEdgesBuilt.size < 4 && Math.random() < 0.2);
+    || (g.pop > 6 && coreEdges < 4 && Math.random() < 0.2);
   if (wantWall && g.canAfford('palisade')) {
-    const seg = planDefensiveSegment();
-    if (seg) { pushOrder({ type: ORDER.WALL, target: 'palisade', from: seg.from, to: seg.to, gate: seg.gate, qty: 1 }); return; }
+    const seg = planSectionWall('core');
+    if (seg) { pushOrder({ type: ORDER.WALL, target: 'palisade', section: 'core', from: seg.from, to: seg.to, gate: seg.gate, qty: 1 }); return; }
   }
-  // Fortify: once the fence ring is mostly up and the folk are many, upgrade a
-  // core side to a tower-linked wood/stone wall — real defense + troop capacity.
-  if (g.pop > 10 && S.wallEdgesBuilt.size >= 2 && (S.fortEdges ? S.fortEdges.size : 0) < 4
-      && (g.res.stone > 24 || g.res.timber > 34) && Math.random() < 0.15) {
-    if (planFortSpan()) return;
+  // Ring the farmland once the core is closed and the fields have grown.
+  if (coreEdges >= 4 && S.farmTiles.size > 8 && g.pop > 9 && g.canAfford('palisade')
+      && sectionEdgesBuilt('farmland') < 4 && Math.random() < 0.15) {
+    const seg = planSectionWall('farmland');
+    if (seg) { pushOrder({ type: ORDER.WALL, target: 'palisade', section: 'farmland', from: seg.from, to: seg.to, gate: seg.gate, qty: 1 }); return; }
+  }
+  // Upgrade a fully-ringed section a tier as materials allow (core before
+  // farmland). Gated on a CLOSED ring (all four sides) so an upgrade re-lays a
+  // complete perimeter, not a half-built one.
+  if (g.pop > 10 && (g.res.stone > 30 || g.res.timber > 40) && Math.random() < 0.15) {
+    for (const section of ['core', 'farmland']) {
+      const tier = S.sectionTier[section] || 0;
+      if (tier >= 1 && tier < 3 && sectionEdgesBuilt(section) >= 4 && g.canAfford('palisade')) { pushOrder({ type: ORDER.WALL, target: 'palisade', section, upgrade: true, qty: 1 }); return; }
+    }
   }
   // Deepen before sprawl: sometimes raise a standing building's level (the
   // per-building upgrade) instead of adding another sprite — richer output from

@@ -30,7 +30,7 @@ own commit so anything can be rolled back.
 | F4 | seasons + clearer day/night | game.js, terrain.js, town.js, hud.js | ✅ |
 | F5 | starvation, disease, unhappiness | game.js, hud.js | ✅ |
 | F6 | research — discover geology/salt/lore from world.js | new research.js, game.js, hud.js, serve.mjs | ✅ |
-| F7 | sectioned walls + wall levels | walls.js, orders.js, state.js | ☐ |
+| F7 | sectioned walls + wall levels | walls.js, orders.js, state.js | ✅ |
 | F8 | people fight raids; pathing affects clash | villagers.js, game.js, walls.js | ☐ |
 | F9 | speaker fealty (pop→speaker, head-speaker worker distro) | villagers.js, orders.js, will.js, serve.mjs | ☐ |
 | F10 | speaker UI cleanup + filterable log popout | hud.js, ui.js, town.css | ☐ |
@@ -46,6 +46,17 @@ the REAL local rock/rockAge (geology), salt/salinity (deposits), drainage/river,
 elevation, nearby named features, and realm history. Nothing is invented.
 
 ## Log
+- 2026-07-13: **F7 done** — walls now ring named SECTIONS (core / farmland /
+  town), not just the core, and each walled section has a TIER = its level:
+  fence(1) → wood(2) → stone(3). planSectionWall cycles a section's four sides
+  (keyed `${section}:${side}`, box locked in S.sectionBox); upgradeSectionWall
+  re-lays the whole ring a tier sturdier with a tower at each corner (each side
+  becomes a fort span). troopCap now weights spans by tier (wood 2, stone 3, via
+  fortStrength). The steward rings the core, then the farmland, then upgrades
+  sections as it prospers. planFortSpan retired (superseded). Old wall saves
+  migrate (bare edges → core:*, core tier/box derived from existing tiles).
+  Verifier clean; engine harnesses unaffected. EYEBALL: sectioned rings +
+  tier tints/towers are render-only.
 - 2026-07-13: **F5 done** — starvation, disease, unhappiness. A `happiness`
   stat (0..1) eases toward happinessTarget() (raised by a full/varied larder,
   safety, faith, a proud keep; lowered by hunger, crowding, and moraleShock from

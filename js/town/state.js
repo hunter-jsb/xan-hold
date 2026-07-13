@@ -30,7 +30,9 @@ export const S = {
   towers: new Set(),    // "x,y" tiles holding a watchtower — the anchors wood/stone walls span between
   towerSprites: [],
   wallSprites: [], wallsVersion: 0, wallsRendered: -1, wallsPruned: false, // wallsPruned: one-time scrub of pre-wallBlocked saves (see renderWalls)
-  wallEdgesBuilt: new Set(), // which sides of the settlement localSteward has already planned (see planDefensiveSegment)
+  wallEdgesBuilt: new Set(), // which section sides are planned, keyed `${section}:${side}` (see planSectionWall)
+  sectionTier: {},           // section -> wall tier: 1 fence, 2 wood, 3 stone (a walled section's "level")
+  sectionBox: {},            // section -> {x0,y0,x1,y1} its ring was laid at (locked once, so upgrades re-lay in place)
   oreNodes: [], woodNodes: [], // resource nodes the folk walk out to work
   // Impassable water (see findPath, which blocks S.water exactly like S.walls)
   // and its shoreline: land tiles touching water, nearest-town first, that
