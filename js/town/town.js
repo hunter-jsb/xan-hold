@@ -262,6 +262,20 @@ function discoveryBurst() {
   }
 }
 
+// drawFealty — a faint gold thread from each pop to its speaker (v.liege), so
+// the fealty parishes (F9) read as a subtle web. Redrawn each frame (folk move).
+function drawFealty() {
+  if (!S.fealtyGfx) { S.fealtyGfx = new Graphics(); S.ground.addChild(S.fealtyGfx); }
+  const g = S.fealtyGfx; g.clear();
+  let any = false;
+  for (const v of S.villagers) {
+    const lg = v.liege;
+    if (!lg || !lg.parent) continue;
+    g.moveTo(v.x, v.y - 6).lineTo(lg.x, lg.y - 6); any = true;
+  }
+  if (any) g.stroke({ width: 0.7, color: 0xffdf6a, alpha: 0.28 }); // speaker-gold, faint
+}
+
 // stepMood — now and then, a couple of folk express the hold's mood/health.
 function stepMood() {
   const g = S.game; let color = null;
@@ -280,6 +294,7 @@ function onFrame(ticker) {
   for (const v of S.villagers) stepVillager(v, dt);
   stepRaid(dt);   // advance any live raid wave (move raiders, resolve the clash)
   stepWeather(dt); // drift the seasonal snow/leaves/petals
+  drawFealty();    // the faint parish threads from folk to their speaker
   // hover highlight rings: perma (v.home) vs temp (v.haulTarget) assignees of
   // S.hoverBuilding — only exist while hovering (see setHoverBuilding).
   if (S.hoverBuilding) refreshHighlights(Date.now());
