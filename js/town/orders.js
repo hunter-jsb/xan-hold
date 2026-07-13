@@ -306,8 +306,11 @@ export function localSteward() {
   // field still has room to grow, expand it rather than breaking ground on a
   // new one (see wantsNewFarmField/nextFarmPlot) — replaces the old
   // scarce-food coin-flip that scattered size-1 fields across the map.
-  const wantFood = S.focus === FOCUS.FOOD || g.foodTotal() < g.foodCapTotal() * 0.35;
-  if ((wantFood || (h.rich.food || 0) >= 0.12) && !wantsNewFarmField()) {
+  // Only grow the fields when food is actually WANTED (focus, or the larder is
+  // running down) — a food-rich hold with full stores shouldn't farm forever
+  // and crowd out everything else (housing, defense, trade).
+  const wantFood = S.focus === FOCUS.FOOD || g.foodTotal() < g.foodCapTotal() * 0.5;
+  if (wantFood && !wantsNewFarmField()) {
     pushOrder({ type: ORDER.EXPAND, target: 'farm', qty: 1 }); return;
   }
   // Walls: the same trigger the old auto-ring had (raided + under-defended,
@@ -347,7 +350,10 @@ export function localSteward() {
   // per-building upgrade) instead of adding another sprite — richer output from
   // the same footprint. Farms deepen via the EXPAND path above.
   if (g.pop > 8 && Math.random() < 0.22) {
-    const byRes = { timber: ['sawmill'], stone: ['quarry'], ore: ['mine'], salt: ['saltern'], coin: ['market'] };
+    // Deepen PRODUCERS of real goods — not markets: a market's output is coin,
+    // and deepening markets just balloons an already-uncapped pile (see the F2
+    // sum-scaling). One or two markets is plenty; coin's job is to buy scarcity.
+    const byRes = { timber: ['sawmill'], stone: ['quarry'], ore: ['mine'], salt: ['saltern'] };
     const order = [];
     for (const [res] of Object.entries(h.rich).sort((a, b) => b[1] - a[1])) for (const id of (byRes[res] || [])) order.push(id);
     order.push('wharf', 'longhouse', 'granary');
@@ -370,23 +376,42 @@ export function localSteward() {
       pushOrder({ type: ORDER.MOVE, target: key }); return;
     }
   }
+  // Keep scarce building materials flowing BEFORE the build list: the hold buys
+  // the stone/timber it's short on — especially what it can't produce (a
+  // stone-poor hold mines no stone, so every longhouse/granary/wall's stone must
+  // be bought) — with surplus coin. This is what keeps a hold from stalling for
+  // want of materials, and drains idle coin so it doesn't pile up uncapped.
+  if (g.tradeUnlocked()) {
+    for (const mat of ['stone', 'timber']) {
+      const makesIt = mat === 'timber' ? g.level('sawmill') : g.level('quarry');
+      const floor = makesIt ? 15 : 40; // a material it produces only needs a top-up; one it can't, a real stock
+      if ((g.res[mat] || 0) < floor && g.res.coin >= g.buyPrice(mat) * 10) {
+        pushOrder({ type: ORDER.TRADE, action: TRADE_ACT.BUY, resource: mat, qty: 10 }); return;
+      }
+    }
+  }
   const want = [];
   // A speaker's focus can bid a specific building outright — the placement
   // layer (nextCorePlot/nextOuterPlot/nextFarmPlot) still decides WHICH
   // district it lands in by type, so this only biases priority, not routing.
   if (S.focus && S.focus !== FOCUS.FOOD && S.focus !== FOCUS.DEFENSE && BUILDINGS.some((b) => b.id === S.focus)) want.push(S.focus);
-  if (g.pop >= g.popCap() - 0.5) want.push('longhouse');
-  if (!g.tradeUnlocked()) want.push('market');
+  // ESSENTIALS first — every hold needs its own timber source, a food source,
+  // and housing before it sinks materials into coin/markets/luxuries. (A
+  // coin-rich hold got this wrong: it built markets, went timber-broke, and
+  // stalled — see the resupply-trade fallback below.)
+  if (!g.level('sawmill') && (h.rich.timber || 0) >= 0.10) want.push('sawmill');
+  if (!g.level('farm') && !g.level('wharf')) want.push('farm');
+  if (!g.tradeUnlocked()) want.push('market');                    // one market unlocks trade
+  if (g.pop >= g.popCap() - 1) want.push('longhouse');
   if (g.foodTotal() >= g.foodCapTotal() * 0.92) want.push('granary');
-  if (S.focus === FOCUS.FOOD) want.push('farm');
-  // Raise the faith now and then — reliquaries widen the Will's voice.
   if (g.level('reliquary') < 4 && g.pop > 12 && Math.random() < 0.12) want.push('reliquary');
-  // Found a Scholars' Hall once the hold is established — it quickens research.
   if (g.count('scholarshall') < 1 && g.pop > 10 && Math.random() < 0.1) want.push('scholarshall');
-  // then the hold's richest producers — richness sets the lean, but a random
-  // jitter keeps the build ORDER from being identical every run (the town
-  // shouldn't develop the exact same way every playthrough).
-  const prodByRes = { food: ['farm', 'wharf'], timber: ['sawmill'], stone: ['quarry'], ore: ['mine'], salt: ['saltern'], coin: ['market'] };
+  // Then the hold's richest producers — but hold MARKETS back until the basics
+  // (a timber source AND a food source) stand, and cap them, so a coin-rich
+  // hold doesn't sprawl markets while starving for materials. Jitter keeps runs
+  // from being identical.
+  const basics = g.level('sawmill') && (g.level('farm') || g.level('wharf'));
+  const prodByRes = { food: ['farm', 'wharf'], timber: ['sawmill'], stone: ['quarry'], ore: ['mine'], salt: ['saltern'], coin: (basics && g.count('market') < 3) ? ['market'] : [] };
   const leaning = Object.entries(h.rich).map(([res, v]) => [res, v + Math.random() * 0.18]).sort((a, b) => b[1] - a[1]);
   for (const [res] of leaning)
     for (const id of (prodByRes[res] || [])) want.push(id);

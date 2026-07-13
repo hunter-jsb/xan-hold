@@ -28,7 +28,7 @@ const CFG = {
   saltPerFood: 0.2,       // salt spent to preserve one unit of food
   // Food is five categories now (see FOOD); each stores on its own. Staples keep
   // deeper stores than perishables. Timber/stone/ore/salt unchanged.
-  baseCaps: { grain: 260, roots: 220, greens: 150, fruit: 150, fish: 130, timber: 400, stone: 300, ore: 250, salt: 200, coin: 1e9 },
+  baseCaps: { grain: 260, roots: 220, greens: 150, fruit: 150, fish: 130, timber: 400, stone: 300, ore: 250, salt: 200, coin: 5000 },
   // Market base coin-price per unit; buying a good you lack is dear,
   // selling one you're rich in is how a hold earns coin. Fruit is the dearest
   // food (wine/olives read as a luxury); fish/greens cheap and perishable.
