@@ -6,7 +6,7 @@
 // in-world chronicle. Nothing here writes back to the sim.
 import { Application, Container, Graphics, Sprite, Texture, AnimatedSprite } from 'pixi.js';
 import { loadAtlas, TILE } from './atlas.js';
-import { goTo } from './pathfind.js';
+import { goTo, walkPath } from './pathfind.js';
 import { emit, stepFx } from './fx.js';
 import { TOWN_W, TOWN_H, CENTER_TX, CENTER_TY, DAY_MS, STEWARD_MS, LOCAL_MS, ROLE_LABEL, HIGHLIGHT_COLOR, BUILD_NAME } from './constants.js';
 import { S, heldKeys } from './state.js';
@@ -264,12 +264,7 @@ function stepCaravan(dt) {
   if (!S.caravans || !S.caravans.length) return;
   for (const c of S.caravans) {
     if (c.dead) continue;
-    if (!c.path || !c.path.length) { killCaravan(c); continue; } // arrived (or no route) → gone
-    const wp = c.path[0], dx = wp.x - c.x, dy = wp.y - c.y, d = Math.hypot(dx, dy), sp = 22 * dt;
-    if (d < sp) { c.x = wp.x; c.y = wp.y; c.path.shift(); } else { c.x += (dx / d) * sp; c.y += (dy / d) * sp; }
-    c.zIndex = c.y;
-    const dir = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up');
-    if (dir !== c.dir) { c.dir = dir; c.anim.textures = S.atlas.walk[dir]; c.anim.play(); }
+    if (!walkPath(c, 22, dt)) killCaravan(c); // arrived (or no route) → gone
   }
   S.caravans = S.caravans.filter((c) => !c.dead);
 }

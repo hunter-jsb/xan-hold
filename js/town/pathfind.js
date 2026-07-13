@@ -2,7 +2,7 @@
 // route on the villager; stepVillager just walks it.
 import { TILE } from './atlas.js';
 import { S } from './state.js';
-import { TOWN_W, TOWN_H } from './constants.js';
+import { TOWN_W, TOWN_H, DIR } from './constants.js';
 import { wallKey, DIRS4 } from './coords.js';
 
 // ---- pathing (route around walls, through gates) ---------------------
@@ -55,4 +55,20 @@ export function goTo(v, x, y) {
   const path = findPath(v.x, v.y, x, y);
   if (!path) { v.moving = false; v.path = null; v.idle = 1 + Math.random() * 3; return; }
   v.path = path; v.moving = true;
+}
+
+// walkPath advances `e` one frame along its cached route (e.path) at `speed`
+// px/s, turning its walk animation (e.anim/e.dir) to face travel and y-sorting
+// it. Returns true while still walking, false once arrived (path emptied). The
+// shared mover for simple path-followers — raiders, caravans. (Villagers keep
+// their own richer step: work/haul/site arrival handling.)
+export function walkPath(e, speed, dt) {
+  if (!e.path || !e.path.length) return false;
+  const wp = e.path[0], dx = wp.x - e.x, dy = wp.y - e.y, d = Math.hypot(dx, dy), sp = speed * dt;
+  if (d < sp) { e.x = wp.x; e.y = wp.y; e.path.shift(); }
+  else { e.x += (dx / d) * sp; e.y += (dy / d) * sp; }
+  e.zIndex = e.y;
+  const dir = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? DIR.RIGHT : DIR.LEFT) : (dy > 0 ? DIR.DOWN : DIR.UP);
+  if (dir !== e.dir && e.anim) { e.dir = dir; e.anim.textures = S.atlas.walk[dir]; e.anim.play(); }
+  return e.path.length > 0;
 }

@@ -8,7 +8,7 @@ import { Container, AnimatedSprite } from 'pixi.js';
 import { TILE } from './atlas.js';
 import { S } from './state.js';
 import { CENTER_TX, CENTER_TY, TOWN_W, TOWN_H, ROLE } from './constants.js';
-import { goTo } from './pathfind.js';
+import { goTo, walkPath } from './pathfind.js';
 import { pushChronicle } from './hud.js';
 
 const RAIDER_TINT = 0x9a2a2a;     // dark blood-red — reads as an enemy against the folk
@@ -64,17 +64,12 @@ function killRaider(r) { r.dead = true; S.entities.removeChild(r); r.destroy({ c
 // moveRaider walks a raider along its cached path toward the core, re-pathing
 // (throttled by goTo's idle on a sealed route) when it has none.
 function moveRaider(r, dt) {
-  if (!r.path || !r.path.length) {
+  if (!r.path || !r.path.length) {   // no route (walled off) — wait, then re-path to the core
     r.idle = (r.idle || 0) - dt;
     if (r.idle <= 0) { const core = CORE_PX(); goTo(r, core.x, core.y); }
     return;
   }
-  const wp = r.path[0], dx = wp.x - r.x, dy = wp.y - r.y, d = Math.hypot(dx, dy), sp = 20 * dt;
-  if (d < sp) { r.x = wp.x; r.y = wp.y; r.path.shift(); }
-  else { r.x += (dx / d) * sp; r.y += (dy / d) * sp; }
-  r.zIndex = r.y;
-  const dir = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up');
-  if (dir !== r.dir) { r.dir = dir; r.anim.textures = S.atlas.walk[dir]; r.anim.play(); }
+  walkPath(r, 20, dt);
 }
 
 // stepRaid advances the wave each frame: soldiers within reach cut a raider
