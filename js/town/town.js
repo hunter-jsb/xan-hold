@@ -117,14 +117,19 @@ async function boot() {
 }
 
 // Pick the hold: an explicit ?hold= from the map wins, else the last one
-// played, else the realm capital, else the first.
+// played, else a RANDOM viable seat — so a fresh start isn't always the same
+// capital. Each seat's geography drives a genuinely different economy.
 function pickHold() {
   const holds = allHolds();
   const want = new URLSearchParams(location.search).get('hold');
   if (want) { const h = holds.find((x) => x.id === want); if (h) return h; }
   const saved = holds.find((h) => Game.hasSave(h.id));
   if (saved) return saved;
-  return holds.find((h) => h.tier === 27) || holds[0];
+  // Prefer seats that can actually feed themselves (good ground or water), so a
+  // random found isn't a barren rock; fall back to any seat.
+  const viable = holds.filter((h) => (h.rich.food || 0) >= 0.08 || (h.n && ((h.n.riverMax || 0) > 0.08 || (h.n.lake || 0) > 0.08 || (h.n.sea || 0) > 0.05)));
+  const pool = viable.length ? viable : holds;
+  return pool[Math.floor(Math.random() * pool.length)];
 }
 
 function bgForHold(h) {

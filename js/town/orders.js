@@ -399,8 +399,11 @@ export function localSteward() {
   // and housing before it sinks materials into coin/markets/luxuries. (A
   // coin-rich hold got this wrong: it built markets, went timber-broke, and
   // stalled — see the resupply-trade fallback below.)
-  if (!g.level('sawmill') && (h.rich.timber || 0) >= 0.10) want.push('sawmill');
-  if (!g.level('farm') && !g.level('wharf')) want.push('farm');
+  const ess = [];   // essentials in a jittered order, so the opening varies run-to-run
+  if (!g.level('sawmill') && (h.rich.timber || 0) >= 0.10) ess.push('sawmill');
+  if (!g.level('farm') && !g.level('wharf')) ess.push('farm');
+  if (Math.random() < 0.5) ess.reverse();
+  for (const e of ess) want.push(e);
   if (!g.tradeUnlocked()) want.push('market');                    // one market unlocks trade
   if (g.pop >= g.popCap() - 1) want.push('longhouse');
   if (g.foodTotal() >= g.foodCapTotal() * 0.92) want.push('granary');
