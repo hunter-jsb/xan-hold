@@ -8,7 +8,7 @@ import { Application, Container, Graphics, Sprite, Texture, AnimatedSprite } fro
 import { loadAtlas, TILE } from './atlas.js';
 import { goTo, walkPath } from './pathfind.js';
 import { emit, stepFx } from './fx.js';
-import { TOWN_W, TOWN_H, CENTER_TX, CENTER_TY, DAY_MS, STEWARD_MS, LOCAL_MS, ROLE_LABEL, HIGHLIGHT_COLOR, BUILD_NAME } from './constants.js';
+import { TOWN_W, TOWN_H, CENTER_TX, CENTER_TY, DAY_MS, STEWARD_MS, LOCAL_MS, ROLE, ROLE_LABEL, HIGHLIGHT_COLOR, BUILD_NAME } from './constants.js';
 import { S, heldKeys } from './state.js';
 import { loadWalls } from './walls.js';
 import { buildPlots, paintGround, placeOreNodes, placeWater } from './terrain.js';
@@ -278,18 +278,31 @@ function divinePulse() {
   for (const s of spots) emit({ x: s.x, y: s.y, ring: true, size: 4, grow: 34, life: 1.3, color: 0xffe27a, alpha: 0.78 });
 }
 
-// drawFealty — a faint gold thread from each pop to its speaker (v.liege), so
-// the fealty parishes (F9) read as a subtle web. Redrawn each frame (folk move).
+// drawFealty — gold threads from a speaker to its sworn folk, shown ONLY while
+// the cursor hovers that speaker (always-on read as noise at high pop). Also
+// shown for ALL speakers while hovering a reliquary (their home).
 function drawFealty() {
   if (!S.fealtyGfx) { S.fealtyGfx = new Graphics(); S.ground.addChild(S.fealtyGfx); }
   const g = S.fealtyGfx; g.clear();
+  const overReliquary = S.hoverBuilding && S.hoverBuilding.type === 'reliquary';
+  let target = null;
+  if (!overReliquary && S.mousePx) {   // the speaker under the cursor, if any
+    let bd = 18 * 18;
+    for (const v of S.villagers) {
+      if (v.role !== ROLE.SPEAKER) continue;
+      const d = (v.x - S.mousePx.x) ** 2 + (v.y - S.mousePx.y) ** 2;
+      if (d < bd) { bd = d; target = v; }
+    }
+  }
+  if (!overReliquary && !target) return;
   let any = false;
   for (const v of S.villagers) {
     const lg = v.liege;
     if (!lg || !lg.parent) continue;
+    if (!overReliquary && lg !== target) continue;
     g.moveTo(v.x, v.y - 6).lineTo(lg.x, lg.y - 6); any = true;
   }
-  if (any) g.stroke({ width: 0.7, color: 0xffdf6a, alpha: 0.28 }); // speaker-gold, faint
+  if (any) g.stroke({ width: 0.8, color: 0xffdf6a, alpha: 0.4 }); // brighter — it's now a deliberate look
 }
 
 // stepMood — now and then, a couple of folk express the hold's mood/health.
@@ -401,6 +414,8 @@ function buildingAt(cx, cy) {
 // hoverIdentify shows a small label for the building under the cursor, and
 // (via setHoverBuilding) drives the assigned-villager highlight rings.
 function hoverIdentify(e) {
+  // world-pixel cursor position — drawFealty reads it to find a hovered speaker
+  S.mousePx = { x: (e.clientX - S.world.x) / S.scale, y: (e.clientY - S.world.y) / S.scale };
   const h = buildingAt(e.clientX, e.clientY);
   if (h !== S.hoverBuilding) setHoverBuilding(h);
   const tip = document.getElementById('btip');
@@ -549,7 +564,7 @@ function initPan() {
   el.addEventListener('pointerup', end);
   el.addEventListener('pointercancel', end);
   el.addEventListener('pointerleave', () => { const t = document.getElementById('btip'); if (t) t.style.display = 'none'; setHoverBuilding(null); });
-  addEventListener('keydown', (e) => { if (e.target && e.target.tagName === 'INPUT') return; const k = e.key.toLowerCase(); if (k === 'w' || k === 'a' || k === 's' || k === 'd') heldKeys.add(k); });
+  addEventListener('keydown', (e) => { if (e.target && e.target.tagName === 'INPUT') return; if (e.ctrlKey || e.metaKey || e.altKey) return; const k = e.key.toLowerCase(); if (k === 'w' || k === 'a' || k === 's' || k === 'd') heldKeys.add(k); });
   addEventListener('keyup', (e) => heldKeys.delete(e.key.toLowerCase()));
   addEventListener('blur', () => heldKeys.clear()); // don't let a key stick when focus leaves
 }
@@ -663,6 +678,7 @@ function dumpState() {
 function wireKeys() {
   addEventListener('keydown', (e) => {
     if (e.target && e.target.tagName === 'INPUT') return; // let the Steward-ask input type freely
+    if (e.ctrlKey || e.metaKey || e.altKey) return; // browser shortcuts (Ctrl+R = refresh!) must never hit game keys
     const k = e.key.toLowerCase();
     if (k === 'p') showStewardAsk();
     else if (k === 'h') { S.hudOn = !S.hudOn; document.getElementById('hud').style.display = S.hudOn ? '' : 'none'; }
