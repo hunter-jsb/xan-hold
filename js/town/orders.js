@@ -30,7 +30,13 @@ export function executeOrders(dt) {
     if (active >= MAX_ACTIVE) break;
     if (o.status === 'pending') { o.status = 'active'; o.progress = 0; active++; }
   }
-  for (const a of S.orderLog) if (a.status === 'active') advanceOrder(a, dt);
+  // One bad order (an LLM-authored target, a future bug) must never freeze the
+  // whole pipeline — it gets skipped, everything else keeps advancing.
+  for (const a of S.orderLog) {
+    if (a.status !== 'active') continue;
+    try { advanceOrder(a, dt); }
+    catch (e) { a.status = 'skipped'; a.doneAt = Date.now(); console.error('[orders] order failed, skipped:', a.type, a.target, e); }
+  }
   // A target whose order just FAILED goes on cooldown, so localSteward doesn't
   // re-queue the same unsatisfiable work forever (the market skip-loop: core
   // full + existing instances maxed → skipped → re-wanted → skipped …).
@@ -64,6 +70,7 @@ export function advanceBuildOrder(a, dt) {
     }
     return;
   }
+  if (!BY_ID[a.target]) { a.status = 'skipped'; a.doneAt = Date.now(); return; } // unknown target (LLM-authored) — never let it jam the queue
   if (a.target === 'mine' && !mineNodeAvailable()) { a.status = 'skipped'; a.doneAt = Date.now(); return; }
   if (a.target === 'wharf' && !wharfSiteAvailable()) { a.status = 'skipped'; a.doneAt = Date.now(); return; }
   if (a.target === 'farm' && !farmFieldAvailable()) { a.status = 'skipped'; a.doneAt = Date.now(); return; }

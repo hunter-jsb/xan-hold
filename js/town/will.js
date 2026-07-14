@@ -61,13 +61,15 @@ export function willState(occasion, instruction) {
 }
 
 export function normalizeOrder(o) {
-  // A "build a wall/palisade" decree IS a wall order — the Will's speakers can
-  // only emit build/trade/focus, so their wall wish arrives as `build palisade`.
-  // Route it to the segment system (which lays real tiles) instead of the
-  // building-site path (which would only deepen the defense level, no wall).
-  const type = (o.type === ORDER.BUILD && o.target === 'palisade') ? ORDER.WALL : o.type;
+  // A speaker's wall-wishes all route to the WALL system, not the building-site
+  // path: `build palisade`/`build wall` lay the next segment; `build tower`
+  // upgrades a section's ring (which raises corner towers). 'tower'/'wall' are
+  // NOT in the building catalogue — left unrouted they jammed the whole queue.
+  const wallish = o.type === ORDER.BUILD && (o.target === 'palisade' || o.target === 'wall' || o.target === 'tower');
+  const type = wallish ? ORDER.WALL : o.type;
   return {
-    type, target: o.target, action: o.action, resource: o.resource, value: o.value || o.target, qty: o.qty || 1,
+    type, target: wallish ? 'palisade' : o.target, upgrade: o.target === 'tower' || undefined,
+    action: o.action, resource: o.resource, value: o.value || o.target, qty: o.qty || 1,
     from: o.from, to: o.to, gate: o.gate,     // a 'wall' order: segment endpoints/gate (planned on demand if absent)
   };
 }
