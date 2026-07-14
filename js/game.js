@@ -831,13 +831,22 @@ class Game {
   // A Market turns the hold's surplus into coin and coin into the goods
   // its land can't yield — the loop that keeps a stone-poor forest hall
   // or an ore-rich frontier alive.
+  // A Market gives fair prices; without one, passing PEDDLERS still trade —
+  // buying costs half again, selling fetches half — so a poor hold can always
+  // bootstrap (sell its surplus to fund its first works) instead of
+  // deadlocking on "a market needs the timber only a market could buy".
   tradeUnlocked() { return this.level('market') > 0; }
   localRich(res) { return res === 'coin' ? 0 : (FOOD[res] ? (this.h.rich.food || 0) : (this.h.rich[res] || 0)); }
-  buyPrice(res) { return Math.max(1, Math.ceil(CFG.basePrice[res] * (1.6 - 0.9 * this.localRich(res)))); }
-  sellPrice(res) { return Math.max(1, Math.floor(CFG.basePrice[res] * (0.5 + 0.05 * this.level('market')) * (1.2 - 0.5 * this.localRich(res)))); }
+  buyPrice(res) {
+    const p = Math.max(1, Math.ceil(CFG.basePrice[res] * (1.6 - 0.9 * this.localRich(res))));
+    return this.tradeUnlocked() ? p : Math.ceil(p * 1.5);
+  }
+  sellPrice(res) {
+    const p = Math.max(1, Math.floor(CFG.basePrice[res] * (0.5 + 0.05 * this.level('market')) * (1.2 - 0.5 * this.localRich(res))));
+    return this.tradeUnlocked() ? p : Math.max(1, Math.floor(p * 0.5));
+  }
 
   buy(res, qty = CFG.tradeLot) {
-    if (!this.tradeUnlocked()) return false;
     const cost = this.buyPrice(res) * qty;
     if (this.res.coin < cost) return false;
     this.res.coin -= cost;
@@ -846,7 +855,7 @@ class Game {
     return true;
   }
   sell(res, qty = CFG.tradeLot) {
-    if (!this.tradeUnlocked() || this.res[res] < qty) return false;
+    if (this.res[res] < qty) return false;
     this.res[res] -= qty;
     this.res.coin += this.sellPrice(res) * qty;
     this.tradeTally = (this.tradeTally || 0) + 1;

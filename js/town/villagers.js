@@ -22,7 +22,9 @@ export function roleWeights() {
   // A baseline so building never fully stalls for want of hands; more sites
   // awaiting builders pulls a bigger share of the folk onto the work.
   w.builder = 1 + S.sites.length * 4;
-  w.soldier = troopCap() + (isRaided() ? 3 : 0); // the folk muster up to the hold's troop capacity (barracks + fort spans)
+  // Muster up to troop capacity, but never more than ~a third of the folk —
+  // a tiny frontier hold must keep hands on the fields or it starves itself.
+  w.soldier = Math.min(troopCap() + (isRaided() ? 3 : 0), Math.max(2, Math.ceil(g.pop / 3)));
   w.speaker = 1 + g.level('reliquary') * 2; // always at least one; reliquaries raise more
   return Object.entries(w).filter(([, v]) => v > 0);
 }

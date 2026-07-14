@@ -128,5 +128,23 @@ for (let i = 0; i < 400; i++) { fed.step(2); if (!Number.isFinite(fed.happiness)
 ok('fed hold: finite morale + pop>=3 over 400 ticks', fedOk);
 ok('fed hold not flagged starving', fed.starving === false);
 
+// ---- peddler bootstrap: a broke, timber-poor march can fund itself --------
+const march = { id: 'sok', name: 'Sokaprus', realm: 'K', region: 'plateau', tierName: 'march', ancestry: 'Northern',
+  rich: { food: 0.21, timber: 0.09, stone: 1, ore: 0.98, salt: 0.01, coin: 0.28 }, warmth: 0.3, danger: 0, n: { riverMax: 0, lake: 0, sea: 0 } };
+const bk = new Game(march, null);
+bk.res = { grain: 28, roots: 8, greens: 150, fruit: 0, fish: 0, timber: 4, stone: 38, ore: 5, salt: 0, coin: 4 };
+ok('no market yet', bk.tradeUnlocked() === false);
+ok('peddler SELL works without a market', bk.sell('greens', 20) === true);
+ok('peddler sale earned coin', bk.res.coin > 4);
+const coinBefore = bk.res.coin;
+bk.res.coin = 100;
+ok('peddler BUY works without a market', bk.buy('timber', 10) === true);
+ok('peddler buy delivered timber', bk.res.timber >= 14);
+ok('peddler buy price is dear (paid > base)', 100 - bk.res.coin >= 10);
+bk.res.coin = coinBefore;
+const pFair = new Game(march, null); pFair.instances.market = [1];
+ok('market sell price >= peddler sell price', pFair.sellPrice('greens') >= bk.sellPrice('greens'));
+ok('market buy price <= peddler buy price', pFair.buyPrice('timber') <= bk.buyPrice('timber'));
+
 console.log(fail ? `\n  ✗ ${fail} failed, ${pass} passed` : `\n  ✓ all ${pass} model assertions pass`);
 process.exit(fail ? 1 : 0);

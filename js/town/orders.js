@@ -198,21 +198,34 @@ export function trimOrderLog() {
   }
 }
 
-// autoFund tries to make an order affordable via the market: sell a surplus
-// for coin, and BUY the material the land can't make (e.g. stone for a
-// forest hold's longhouse) — the reason orders used to get stuck.
+// autoFund tries to make an order affordable: sell a surplus for coin (via the
+// market, or peddlers at poor rates without one), and BUY the material the land
+// can't make (e.g. timber for a bare-plateau march) — the anti-deadlock seam.
 export function autoFund(id) {
-  if (!S.game.tradeUnlocked()) return;
+  const g = S.game, need = g.costOf(id);
+  // Sell the most SPARABLE pile: skip coin + this order's own materials; food
+  // only ever down to a living reserve (~5 min of eating); materials only from
+  // a real pile. Fullest-against-cap wins ties (spoiling stores go first).
   const sellSurplus = () => {
-    for (const k of ['grain', 'timber', 'salt', 'ore', 'stone']) {
-      if (S.game.res[k] > 60) { S.game.sell(k, 20); return; }
+    const caps = g.caps(), FOODK = window.XANGAME.FOOD_CATS;
+    const foodSpare = g.foodTotal() - Math.max(30, g.foodEatPerS() * 300);
+    let best = null, bs = 0;
+    for (const k of Object.keys(caps)) {
+      if (k === 'coin' || need[k]) continue;
+      let avail = g.res[k] || 0;
+      if (FOODK.includes(k)) avail = Math.max(0, Math.min(avail, foodSpare));
+      else if (avail < 20) avail = 0;                    // don't strip a lean material stock
+      if (avail <= 0) continue;
+      const score = avail / (caps[k] || 1) + avail / 200; // ratio first, big piles break ties
+      if (score > bs) { bs = score; best = k; }
     }
+    if (best) g.sell(best, Math.max(1, Math.min(20, Math.floor((g.res[best] || 0) / 2))));
   };
-  for (const [res, need] of Object.entries(S.game.costOf(id))) {
-    if (S.game.res[res] >= need) continue;
+  for (const [res, n] of Object.entries(need)) {
+    if (g.res[res] >= n) continue;
     if (res === 'coin') { sellSurplus(); continue; }
-    const short = Math.ceil(need - S.game.res[res]);
-    if (S.game.res.coin >= S.game.buyPrice(res) * short) S.game.buy(res, short);
+    const short = Math.ceil(n - g.res[res]);
+    if (g.res.coin >= g.buyPrice(res) * short) g.buy(res, short);
     else sellSurplus();
   }
 }
@@ -397,33 +410,29 @@ export function localSteward() {
   // stone-poor hold mines no stone, so every longhouse/granary/wall's stone must
   // be bought) — with surplus coin. This is what keeps a hold from stalling for
   // want of materials, and drains idle coin so it doesn't pile up uncapped.
-  if (g.tradeUnlocked()) {
-    for (const mat of ['stone', 'timber']) {
-      const makesIt = mat === 'timber' ? g.level('sawmill') : g.level('quarry');
-      const floor = makesIt ? 15 : 40; // a material it produces only needs a top-up; one it can't, a real stock
-      if ((g.res[mat] || 0) < floor && g.res.coin >= g.buyPrice(mat) * 10) {
-        pushOrder({ type: ORDER.TRADE, action: TRADE_ACT.BUY, resource: mat, qty: 10 }); return;
-      }
+  for (const mat of ['stone', 'timber']) {   // peddlers serve even a marketless hold (dearly)
+    const makesIt = mat === 'timber' ? g.level('sawmill') : g.level('quarry');
+    const floor = makesIt ? 15 : 40; // a material it produces only needs a top-up; one it can't, a real stock
+    if ((g.res[mat] || 0) < floor && g.res.coin >= g.buyPrice(mat) * 10) {
+      pushOrder({ type: ORDER.TRADE, action: TRADE_ACT.BUY, resource: mat, qty: 10 }); return;
     }
   }
   const want = [];
-  // The hold's FOCUS (the founding decree, or a speaker's standing focus) biases
-  // what gets built next: a named focus leans toward its buildings; a focus that
-  // IS a building id bids that one outright. Placement still routes by type.
-  const FOCUS_BUILDS = { growth: ['longhouse', 'granary'], trade: ['saltern', 'market'], industry: ['sawmill', 'quarry', 'mine'], food: ['farm', 'wharf'], defense: ['barracks'] };
-  if (FOCUS_BUILDS[S.focus]) for (const id of FOCUS_BUILDS[S.focus]) want.push(id);
-  else if (S.focus && BUILDINGS.some((b) => b.id === S.focus)) want.push(S.focus);
-  // ESSENTIALS first — every hold needs its own timber source, a food source,
-  // and housing before it sinks materials into coin/markets/luxuries. (A
-  // coin-rich hold got this wrong: it built markets, went timber-broke, and
-  // stalled — see the resupply-trade fallback below.)
+  // ESSENTIALS outrank everything — even the founding focus: a timber source,
+  // a food source, a market (trade at fair prices), and housing when capped.
+  // (A defense-focused march once built barracks forever while homeless.)
   const ess = [];   // essentials in a jittered order, so the opening varies run-to-run
   if (!g.level('sawmill') && (h.rich.timber || 0) >= 0.10) ess.push('sawmill');
   if (!g.level('farm') && !g.level('wharf')) ess.push('farm');
   if (Math.random() < 0.5) ess.reverse();
   for (const e of ess) want.push(e);
-  if (!g.tradeUnlocked()) want.push('market');                    // one market unlocks trade
+  if (!g.tradeUnlocked()) want.push('market');                    // one market unlocks fair prices
   if (g.pop >= g.popCap() - 1) want.push('longhouse');
+  // Then the hold's FOCUS (the founding decree, or a speaker's standing focus)
+  // biases what comes next; a focus that IS a building id bids it outright.
+  const FOCUS_BUILDS = { growth: ['longhouse', 'granary'], trade: ['saltern', 'market'], industry: ['sawmill', 'quarry', 'mine'], food: ['farm', 'wharf'], defense: ['barracks'] };
+  if (FOCUS_BUILDS[S.focus]) for (const id of FOCUS_BUILDS[S.focus]) want.push(id);
+  else if (S.focus && BUILDINGS.some((b) => b.id === S.focus)) want.push(S.focus);
   if (g.foodTotal() >= g.foodCapTotal() * 0.92) want.push('granary');
   if (g.level('reliquary') < 4 && g.pop > 12 && Math.random() < 0.12) want.push('reliquary');
   if (g.count('scholarshall') < 1 && g.pop > 10 && Math.random() < 0.1) want.push('scholarshall');
@@ -437,10 +446,16 @@ export function localSteward() {
   for (const [res] of leaning)
     for (const id of (prodByRes[res] || [])) want.push(id);
   want.push('longhouse');
+  let firstWanted = null;
   for (const id of want) {
     const b = S.game && BUILDINGS.find((x) => x.id === id);
     if (!b || onSkipCooldown(id)) continue;   // benched — its last order just failed
     if (b.kind === 'prod' && S.game.richOf(b) < b.gate && !S.game.level(id)) continue;
+    firstWanted = firstWanted || id;
     if (S.game.canAfford(id)) { pushOrder({ type: ORDER.BUILD, target: id, qty: 1 }); return; }
   }
+  // Nothing affordable — push the TOP want anyway and let the order pipeline
+  // fund it (autoFund sells surplus / peddles), so a broke hold still grinds
+  // toward its next building instead of sitting silent until rich.
+  if (firstWanted) pushOrder({ type: ORDER.BUILD, target: firstWanted, qty: 1 });
 }
