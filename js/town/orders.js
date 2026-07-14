@@ -31,8 +31,17 @@ export function executeOrders(dt) {
     if (o.status === 'pending') { o.status = 'active'; o.progress = 0; active++; }
   }
   for (const a of S.orderLog) if (a.status === 'active') advanceOrder(a, dt);
+  // A target whose order just FAILED goes on cooldown, so localSteward doesn't
+  // re-queue the same unsatisfiable work forever (the market skip-loop: core
+  // full + existing instances maxed → skipped → re-wanted → skipped …).
+  for (const a of S.orderLog) {
+    if (a.status === 'skipped' && !a.cooled) { a.cooled = true; (S.skipCool || (S.skipCool = {}))[a.target || a.type] = Date.now() + 60000; }
+  }
   trimOrderLog();
 }
+
+// onSkipCooldown — was this target's last order recently skipped? (see above)
+export function onSkipCooldown(id) { return !!(S.skipCool && S.skipCool[id] > Date.now()); }
 
 // advanceBuildOrder drives a real (non-farm) `build` order through the
 // construction-site pipeline: mine/wharf's placement gate is checked once,
@@ -310,7 +319,7 @@ export function localSteward() {
   // running down) — a food-rich hold with full stores shouldn't farm forever
   // and crowd out everything else (housing, defense, trade).
   const wantFood = S.focus === FOCUS.FOOD || g.foodTotal() < g.foodCapTotal() * 0.5;
-  if (wantFood && !wantsNewFarmField()) {
+  if (wantFood && !wantsNewFarmField() && !onSkipCooldown('farm')) {
     pushOrder({ type: ORDER.EXPAND, target: 'farm', qty: 1 }); return;
   }
   // Walls: the same trigger the old auto-ring had (raided + under-defended,
@@ -357,11 +366,11 @@ export function localSteward() {
     const order = [];
     for (const [res] of Object.entries(h.rich).sort((a, b) => b[1] - a[1])) for (const id of (byRes[res] || [])) order.push(id);
     order.push('wharf', 'longhouse', 'granary');
-    for (const id of order) if (g.count(id) > 0 && g.canUpgradeAny(id)) { pushOrder({ type: ORDER.EXPAND, target: id, qty: 1 }); return; }
+    for (const id of order) if (g.count(id) > 0 && g.canUpgradeAny(id) && !onSkipCooldown(id)) { pushOrder({ type: ORDER.EXPAND, target: id, qty: 1 }); return; }
   }
   // Expand the keep as the hold prospers — a grander stronghold quarters more
   // folk and stiffens its defense + muster (a per-instance upgrade of the keep).
-  if (g.pop > 12 && g.canUpgradeAny('keep') && Math.random() < 0.12) {
+  if (g.pop > 12 && g.canUpgradeAny('keep') && !onSkipCooldown('keep') && Math.random() < 0.12) {
     pushOrder({ type: ORDER.EXPAND, target: 'keep', qty: 1 }); return;
   }
   // Redistricting: a CORE building stranded outside the current core zone
@@ -423,7 +432,7 @@ export function localSteward() {
   want.push('longhouse');
   for (const id of want) {
     const b = S.game && BUILDINGS.find((x) => x.id === id);
-    if (!b) continue;
+    if (!b || onSkipCooldown(id)) continue;   // benched — its last order just failed
     if (b.kind === 'prod' && S.game.richOf(b) < b.gate && !S.game.level(id)) continue;
     if (S.game.canAfford(id)) { pushOrder({ type: ORDER.BUILD, target: id, qty: 1 }); return; }
   }
