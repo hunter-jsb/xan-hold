@@ -847,6 +847,7 @@ class Game {
   }
 
   buy(res, qty = CFG.tradeLot) {
+    if (CFG.baseCaps[res] == null) return false; // unknown good (LLM-authored 'food') — don't mint a NaN resource
     const cost = this.buyPrice(res) * qty;
     if (this.res.coin < cost) return false;
     this.res.coin -= cost;

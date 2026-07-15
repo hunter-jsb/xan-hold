@@ -67,9 +67,16 @@ export function normalizeOrder(o) {
   // NOT in the building catalogue — left unrouted they jammed the whole queue.
   const wallish = o.type === ORDER.BUILD && (o.target === 'palisade' || o.target === 'wall' || o.target === 'tower');
   const type = wallish ? ORDER.WALL : o.type;
+  // A speaker trading 'food' means the pooled idea, not a real good — route it
+  // to the hold's deepest (sell) / staple (buy) category so the trade lands.
+  let resource = o.resource;
+  if (resource === 'food') {
+    const cats = window.XANGAME.FOOD_CATS;
+    resource = o.action === 'sell' ? cats.reduce((a, c) => (S.game.res[c] || 0) > (S.game.res[a] || 0) ? c : a, cats[0]) : 'grain';
+  }
   return {
     type, target: wallish ? 'palisade' : o.target, upgrade: o.target === 'tower' || undefined,
-    action: o.action, resource: o.resource, value: o.value || o.target, qty: o.qty || 1,
+    action: o.action, resource, value: o.value || o.target, qty: o.qty || 1,
     from: o.from, to: o.to, gate: o.gate,     // a 'wall' order: segment endpoints/gate (planned on demand if absent)
   };
 }
