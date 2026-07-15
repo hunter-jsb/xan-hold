@@ -636,6 +636,7 @@ function townTick() {
 // dumpState POSTs a FULL live diagnostic snapshot to the local server
 // (→ debug-dump.json) so state can be inspected without a GPU. Runs on a timer
 // (boot) so the file is always fresh; 'i' forces one now. (temporary)
+const BUILD_TAG = 'peddler-1'; // bumped on meaningful ships — the dump carries it so a stale tab is detectable
 function dumpState() {
   const g = S.game, B = window.XANGAME.BUILDINGS;
   const R = (o) => Object.fromEntries(Object.entries(o).map(([k, v]) => [k, Math.round(v)]));
@@ -644,7 +645,7 @@ function dumpState() {
   const roleCounts = {};
   for (const v of S.villagers) roleCounts[v.role] = (roleCounts[v.role] || 0) + 1;
   const snap = {
-    at: new Date().toISOString(),
+    at: new Date().toISOString(), ver: BUILD_TAG,
     hold: { name: S.hold.name, tier: S.hold.tierName, realm: S.hold.realm, danger: S.hold.danger, rich: R2(S.hold.rich) },
     time: { season: g.seasonName(), dayPart: g.dayPartName(), warmthNow: +g.warmthNow().toFixed(2) },
     pop: +g.pop.toFixed(1), popCap: g.popCap(), efficiency: +g.efficiency().toFixed(2), jobs: g.jobs(),
