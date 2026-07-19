@@ -1,7 +1,7 @@
 // harness-run.mjs — a stepping smoke test: march the engine through thousands
 // of ticks across day AND season boundaries and assert nothing goes NaN,
 // negative, or throws. The static verifier proves the modules LINK; this proves
-// game.js RUNS. Run: node scratchpad/harness-run.mjs (repo root).
+// game.js RUNS. Run: node test/harness-run.mjs (repo root).
 import fs from 'fs';
 global.window = {};
 eval(fs.readFileSync('js/game.js', 'utf8'));

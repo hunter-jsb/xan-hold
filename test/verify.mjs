@@ -3,7 +3,7 @@
 //   1. syntax   — copy each town/*.js to a .mjs and `node --check` (ESM parse)
 //   2. resolve  — every `import {X} from './Y.js'` : X must be EXPORTED by Y
 //   3. refs     — a symbol OWNED by another module, used here, must be imported
-// Run:  node scratchpad/verify.mjs   (cwd = repo root)
+// Run:  node test/verify.mjs   (cwd = repo root)
 import fs from 'fs';
 import path from 'path';
 import { execFileSync } from 'child_process';

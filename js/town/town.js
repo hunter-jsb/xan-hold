@@ -63,6 +63,13 @@ async function boot() {
   }
   mark('pick hold');
   S.hold = pickHold();
+  // ?hold= is a one-shot pointer from the map: the save keeps you on this seat
+  // from now on. Left in the URL it survives R-reset and re-founds the same
+  // hold every time instead of rolling a fresh seat.
+  if (params.has('hold')) {
+    params.delete('hold');
+    history.replaceState(null, '', location.pathname + (params.toString() ? '?' + params : ''));
+  }
   S.mask = holdMask(S.hold);                         // the god's local face
   ROLE_LABEL.speaker = S.mask.speakers.replace(/s$/, ''); // e.g. "Deepspeaker" in the Folk legend
   loadWalls();                                        // restore this hold's grown wall/gate tiles (see saveWalls)
@@ -636,7 +643,7 @@ function townTick() {
 // dumpState POSTs a FULL live diagnostic snapshot to the local server
 // (→ debug-dump.json) so state can be inspected without a GPU. Runs on a timer
 // (boot) so the file is always fresh; 'i' forces one now. (temporary)
-const BUILD_TAG = 'peddler-1'; // bumped on meaningful ships — the dump carries it so a stale tab is detectable
+const BUILD_TAG = 'reroll-1'; // bumped on meaningful ships — the dump carries it so a stale tab is detectable
 function dumpState() {
   const g = S.game, B = window.XANGAME.BUILDINGS;
   const R = (o) => Object.fromEntries(Object.entries(o).map(([k, v]) => [k, Math.round(v)]));
@@ -693,6 +700,7 @@ function wireKeys() {
       // autosave re-wrote the save before the reload took hold.
       if (confirm('Reset the world? Every hold starts over.')) {
         const p = new URLSearchParams(location.search); p.set('reset', '1');
+        p.delete('hold'); // reset means a fresh seat — drop any map pin
         location.search = '?' + p.toString();
       }
     }

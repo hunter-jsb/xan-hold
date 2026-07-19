@@ -20,7 +20,7 @@ harnesses). Nothing is left half-done. What I could NOT check is rendering
 
 Driven autonomously (2026-07-12/13) while Hunter is away. Method per feature:
 **research → fan out to a cheap subagent → review → verify → commit → next.**
-Verifier: `node scratchpad/verify.mjs` (syntax + import-resolution + cross-module
+Verifier: `node test/verify.mjs` (syntax + import-resolution + cross-module
 refs — the closest thing to "does it boot" without a GPU). Each feature is its
 own commit so anything can be rolled back.
 

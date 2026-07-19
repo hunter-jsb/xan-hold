@@ -1,7 +1,7 @@
 // harness-model.mjs — headless proof of the engine model: per-instance levels
 // (F2), the keep (F3), seasons (F4), morale/disease/starvation (F5). Loads
 // js/game.js in a shimmed window and asserts the invariants, since the dev
-// sandbox can't render. Run: node scratchpad/harness-model.mjs (repo root).
+// sandbox can't render. Run: node test/harness-model.mjs (repo root).
 import fs from 'fs';
 global.window = {};
 eval(fs.readFileSync('js/game.js', 'utf8'));
