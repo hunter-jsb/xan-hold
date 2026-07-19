@@ -69,6 +69,44 @@ walk cycle is included as a clean, evenly-sliced alternate character base.
   `walk_down.png` / `walk_up.png` = 84×22 (6 × 14 px). `walk_left.png` / `walk_right.png`
   = 78×22 (6 × 13 px).
 
+## 4. Clint Bellanger — "Tiny Creatures" (v1.0)  — THE animal family (neutral + hostile)
+
+- **Author:** Clint Bellanger (clintbellanger.net)
+- **Source page:** https://opengameart.org/content/tiny-creatures
+- **Direct download used:** https://opengameart.org/sites/default/files/tiny-creatures.zip
+- **License (quoted verbatim from the pack's `License.txt`):**
+  > License: (Creative Commons Zero, CC0) http://creativecommons.org/publicdomain/zero/1.0/
+  > This content is free to use in personal, educational and commercial projects.
+  > Support my work by crediting Clint Bellanger (this is not mandatory)
+- **Provenance note:** the pack is explicitly "an expansion of Kenney's Tiny Dungeon and
+  Tiny Town … made with Kenney's permission" — literally the same family as our primary
+  town tiles, which is why it slots in without a style seam.
+- **Layout:** 16×16 px tiles, 1 px spacing, atlas = **10 cols × 18 rows = 180 tiles**
+  (`tile_0001`–`tile_0180`, 1-indexed, row-major). Every creature is a **single static
+  pose facing right** — the author's own note says to horizontal-flip for left-facing.
+  No walk cycles; movement reads via flipping + a bob (same trick as the caravan crate).
+- **Used for:** the map animals. Neutral/tameable — sheep (0154), goat (0153), chicken
+  (0151), cow (0152), deer (0163), fawn (0162), rabbit (0178). Hostile — boar (0161),
+  bears ×3 palettes (0164 brown / 0166 black / 0165 polar), snakes ×2 (0041 green /
+  0042 tan). Plus the raccoon (0179) — kin to the one already sitting on the ArMM
+  market-stall counter. The rest of the sheet (fantasy monsters) is unused for now.
+
+## 5. Kenney — "Tiny Farm" (v1.0)  — pen/livestock props + alternate farm animals
+
+- **Author / distributor:** Kenney (https://kenney.nl)
+- **Source page:** https://kenney.nl/assets/tiny-farm
+- **Direct download used:** https://kenney.nl/media/pages/assets/tiny-farm/dfded1ae3e-1782913588/kenney_tiny-farm.zip
+- **License (quoted verbatim from the pack's `License.txt`):**
+  > License: (Creative Commons Zero, CC0)
+  > http://creativecommons.org/publicdomain/zero/1.0/
+  > This content is free to use in personal, educational and commercial projects.
+  > Support us by crediting Kenney or www.kenney.nl (this is not mandatory)
+- **Layout:** 16×16 px tiles, 1 px spacing, atlas = **12 cols × 11 rows = 132 tiles**
+  (`tile_0000`–`tile_0131`, 0-indexed, row-major — same convention as Tiny Town).
+- **Used for:** kept mainly for the PEN/TAMING dressing to come — barn walls/roof, silo,
+  troughs, feed baskets, milk jug, farm fences — plus its own static sheep (0120),
+  goat (0121), chicken (0122) as same-hand alternates to the Tiny Creatures trio.
+
 ---
 
 ## On-disk inventory (all paths under `assets/`)
@@ -97,6 +135,12 @@ characters/
   sodri/walk_up.png     84×22   6 frames × 14px   (facing up)
   sodri/walk_left.png   78×22   6 frames × 13px   (facing left)
   sodri/walk_right.png  78×22   6 frames × 13px   (facing right)
+animals/
+  sheep/goat/chicken/cow/deer/fawn/rabbit .png   16×16  neutral roster (Tiny Creatures)
+  boar/bear/bear_black/bear_polar/snake/snake_tan/raccoon .png  16×16  hostile roster (Tiny Creatures)
+  tiny-creatures_atlas.png   160×288  full 180-tile packed atlas (future picks: monsters etc.)
+  tiny-farm_atlas.png        192×176  Kenney Tiny Farm packed atlas (pen props + alt animals)
+  LICENSE-tiny-creatures.txt / LICENSE-tiny-farm.txt   the packs' own CC0 license files
 _src/    original archives + Kenney License.txt (provenance)
 ```
 
@@ -111,3 +155,8 @@ _src/    original archives + Kenney License.txt (provenance)
 - Sawmill/quarry/mine as dedicated building sprites don't exist as single icons; compose
   them from Kenney log/crate/tool tiles + the ArMM cave-arch, or use Kenney "Tiny Dungeon"
   (CC0) props.
+- **No CC0 wolf exists** (exhaustive 2026-07 sweep): every top-down pixel wolf on OGA is
+  CC-BY/CC-BY-SA/GPL (LPC lineage) or side-view. Tiny Creatures' wolf-headed figures are
+  bipedal monster-people, not animals. Options if a wolf is ever wanted: commission/draw
+  one over the Tiny Creatures boar/bear proportions, or accept an attribution license.
+  Until then the hostile roster is boar/bear/snake.
