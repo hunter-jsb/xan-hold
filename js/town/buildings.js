@@ -7,7 +7,7 @@ import { S } from './state.js';
 import { PLOT, PLOTS_X, PLOTS_Y, CENTER_TX, CENTER_TY, CENTER_PX, CENTER_PY, MAX_PER_TYPE, SITE_ALPHA } from './constants.js';
 import { pxToTile } from './coords.js';
 import { constructionPoof, riseIn, fadeIn, nextWharfSite, nearestNode } from './terrain.js';
-import { renderWalls } from './walls.js';
+import { renderWalls, applyWallJob, saveWalls, WALL_TINT } from './walls.js';
 
 const { BUILDINGS, BY_ID, CROP_BY_ID } = window.XANGAME;
 
@@ -768,9 +768,58 @@ export function startFarmSite() {
   return site;
 }
 
+// ---- masonry: the wall plan, built one tile at a time -----------------
+// stepMasonry (called each townTick) keeps exactly ONE wall tile under
+// construction: when no wall site is open and the plan has jobs, the next
+// job becomes a real 1-tile site a builder must walk to and work. Walls rise
+// tile by tile around the ring — visibly slow, visibly hand-built.
+const WALL_RATE = { fence: 1 / 4, wood: 1 / 6, stone: 1 / 9 }; // solo seconds per tile; towers slower still
+
+export function stepMasonry() {
+  if (S.sites.some((s) => s.type === 'wall' && !s.done)) return;
+  const job = S.wallPlan.shift();
+  if (!job) return;
+  startWallSite(job);
+  S.wallsVersion++; saveWalls(); // its survey stake becomes a site; plan shrank
+}
+
+// startWallSite raises the 1-tile site: a ghost post whose alpha climbs with
+// progress (the shared workSite branch does that), over a bare-earth patch.
+// Builders stand on a free NEIGHBOR tile, not the wall line itself — so the
+// tile landing under their feet never walls them in.
+export function startWallSite(job) {
+  const post = new Sprite(S.atlas.fence.post);
+  post.anchor.set(0.5, 0.5);
+  post.x = job.x * TILE + TILE / 2; post.y = job.y * TILE + TILE / 2;
+  post.zIndex = (job.y + 1) * TILE; post.alpha = SITE_ALPHA;
+  if (job.gate) post.tint = 0xf2c14e; else if (WALL_TINT[job.kind]) post.tint = WALL_TINT[job.kind];
+  S.entities.addChild(post);
+  const free = (x, y) => !S.walls.has(`${x},${y}`) && !S.water.has(`${x},${y}`);
+  const stand = [[0, 1], [0, -1], [1, 0], [-1, 0]].find(([dx, dy]) => free(job.x + dx, job.y + dy)) || [0, 1];
+  const site = {
+    key: `wall-${job.x},${job.y}`, type: 'wall', job, container: post,
+    x: (job.x + stand[0]) * TILE + TILE / 2, y: (job.y + stand[1] + 1) * TILE,
+    scaffold: makeScaffold({ w: 1, h: 1 }, job.x * TILE, job.y * TILE),
+    rate: job.tower ? 1 / 12 : (WALL_RATE[job.kind] || WALL_RATE.fence),
+    progress: 0, builders: new Set(), done: false,
+  };
+  S.sites.push(site);
+  return site;
+}
+
 export function finalizeSite(site) {
   if (site.done) return;
   site.done = true;
+  if (site.type === 'wall') {                    // one more tile of the plan stands
+    applyWallJob(site.job);                      // lands it in S.walls/S.gates/S.towers (+ version/save)
+    if (site.container) { S.entities.removeChild(site.container); site.container.destroy(); }
+    if (site.scaffold) { S.ground.removeChild(site.scaffold); site.scaffold.destroy({ children: true }); }
+    constructionPoof(site.x, site.y);
+    const wi = S.sites.indexOf(site); if (wi >= 0) S.sites.splice(wi, 1);
+    for (const v of site.builders) { v.workSite = null; v.working = false; v.idle = 0; }
+    site.builders.clear();
+    return;
+  }
   if (site.type === 'farm') {                    // a tilled field, not a building
     const plots = S.game.farmPlots, idx = plots.length, crop = S.game.pickCrop(); // a climate-suited crop for this hold
     plots.push({ size: 1, crop });

@@ -32,6 +32,7 @@ export const S = {
   towers: new Set(),    // "x,y" tiles holding a watchtower — the anchors wood/stone walls span between
   towerSprites: [],
   wallSprites: [], wallsVersion: 0, wallsRendered: -1, wallsPruned: false, // wallsPruned: one-time scrub of pre-wallBlocked saves (see renderWalls)
+  wallPlan: [],         // the STRUCTURE PLAN: queued tile jobs {x,y,kind,gate,tower,tag} masons raise ONE AT A TIME (see stepMasonry)
   wallEdgesBuilt: new Set(), // which section sides are planned, keyed `${section}:${side}` (see planSectionWall)
   sectionTier: {},           // section -> wall tier: 1 fence, 2 wood, 3 stone (a walled section's "level")
   sectionBox: {},            // section -> {x0,y0,x1,y1} its ring was laid at (locked once, so upgrades re-lay in place)

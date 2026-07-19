@@ -12,7 +12,7 @@ import { TOWN_W, TOWN_H, CENTER_TX, CENTER_TY, DAY_MS, STEWARD_MS, LOCAL_MS, ROL
 import { S, heldKeys } from './state.js';
 import { loadWalls } from './walls.js';
 import { buildPlots, paintGround, placeOreNodes, placeWater } from './terrain.js';
-import { placeTownhall, reconcileBuildings, districtOf, coreBounds } from './buildings.js';
+import { placeTownhall, reconcileBuildings, districtOf, coreBounds, stepMasonry } from './buildings.js';
 import { stepVillager, reconcileVillagers } from './villagers.js';
 import { initHUD, updateHUD, renderOrders, pushChronicle, renderArchiveDetail } from './hud.js';
 import { executeOrders, localSteward } from './orders.js';
@@ -596,6 +596,7 @@ function townTick() {
 
   executeOrders(dt);
   reconcileBuildings();
+  stepMasonry();       // one wall tile under the masons' hands at a time
   reconcileVillagers();
 
   // A raid was decided since last look: keep isRaided() true briefly (the muster
@@ -644,7 +645,7 @@ function townTick() {
 // dumpState POSTs a FULL live diagnostic snapshot to the local server
 // (→ debug-dump.json) so state can be inspected without a GPU. Runs on a timer
 // (boot) so the file is always fresh; 'i' forces one now. (temporary)
-const BUILD_TAG = 'reroll-1'; // bumped on meaningful ships — the dump carries it so a stale tab is detectable
+const BUILD_TAG = 'mason-1'; // bumped on meaningful ships — the dump carries it so a stale tab is detectable
 function dumpState() {
   const g = S.game, B = window.XANGAME.BUILDINGS;
   const R = (o) => Object.fromEntries(Object.entries(o).map(([k, v]) => [k, Math.round(v)]));
@@ -667,7 +668,11 @@ function dumpState() {
     research: { insight: Math.round(g.research.insight), researchers: g.researchers(), done: g.research.done, next: (g.researchNext() || {}).name || null },
     focus: S.focus, fealty: S.parishSizes,
     orders: S.orderLog.map((o) => ({ type: o.type, target: o.target, section: o.section, upgrade: o.upgrade, status: o.status, progress: +(o.progress || 0).toFixed(2), qtyLeft: o.qtyLeft, waited: +(o.waited || 0).toFixed(1) })),
-    walls: { tiles: S.walls.size, gates: S.gates.size, towers: S.towers.size, sectionTier: S.sectionTier, edges: [...S.wallEdgesBuilt] },
+    walls: {
+      tiles: S.walls.size, gates: S.gates.size, towers: S.towers.size, sectionTier: S.sectionTier, edges: [...S.wallEdgesBuilt],
+      plan: S.wallPlan.length,
+      raising: (S.sites.find((x) => x.type === 'wall' && !x.done) || {}).key || null,
+    },
     town: { placed: [...S.placed.keys()], sites: S.sites.length, siteKeys: [...S.siteKeys], usedPlots: S.usedPlots.size, farmTiles: S.farmTiles.size, raiders: (S.raiders || []).length },
     lastWill: S.lastWill ? { utterance: S.lastWill.utterance, speakers: (S.lastWill.speakers || []).map((sp) => ({ name: sp.name, directive: sp.directive, orders: (sp.orders || []).map((o) => `${o.type}:${o.target || o.value || o.resource || ''}`) })) } : null,
     chronicle: (S.chronicle || []).slice(0, 12).map((c) => c.text),

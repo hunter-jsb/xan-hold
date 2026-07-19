@@ -308,7 +308,7 @@ export function stepVillager(v, dt) {
     if (v.workSite) {                  // a builder toiling a site — continuous progress, not a fixed timer
       const site = v.workSite;
       if (site.done) { v.workSite = null; v.working = false; pickTarget(v); return; } // someone else finished it first
-      site.progress = Math.min(1, site.progress + BUILD_RATE * dt); // more builders on it → more calls like this one each frame → faster
+      site.progress = Math.min(1, site.progress + (site.rate || BUILD_RATE) * dt); // more builders on it → more calls like this one each frame → faster
       site.container.alpha = site.progress;
       v.idle -= dt;
       if (v.idle <= 0) { workEffect(site); v.idle = 0.6 + Math.random() * 0.8; } // periodic sparks, purely cosmetic

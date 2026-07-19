@@ -27,9 +27,13 @@ export const TIER_KIND = [null, 'fence', 'wood', 'stone'];
 export function wallsSaveKey() { return 'xanhold:' + S.hold.id + ':walls'; }
 export function saveWalls() {
   try {
+    // The plan persists too — a half-built tile goes back on the queue (its
+    // progress is lost, the tile itself is not).
+    const active = (S.sites || []).find((s) => s.type === 'wall' && !s.done);
     localStorage.setItem(wallsSaveKey(), JSON.stringify({
       walls: [...S.walls], gates: [...S.gates], edges: [...S.wallEdgesBuilt],
       kind: [...S.wallKind], towers: [...S.towers], tier: S.sectionTier, box: S.sectionBox,
+      plan: [...(active ? [active.job] : []), ...S.wallPlan],
     }));
   } catch { /* private/sandboxed storage — walls just won't survive a reload */ }
 }
@@ -45,6 +49,10 @@ export function loadWalls() {
     S.wallKind = new Map(d.kind || []); S.towers = new Set(d.towers || []); // pre-rework saves lack these → all fence, no towers
     S.sectionTier = d.tier || {};
     S.sectionBox = d.box || {};
+    S.wallPlan = d.plan || [];
+    // Seed the order-tag sequence past any reloaded jobs, so a fresh order's
+    // tag never collides with an orphaned (pre-reload) order's queued tiles.
+    S.wallTagSeq = Math.max(0, ...S.wallPlan.map((j) => j.tag || 0));
     // Derive the core's tier + box from its existing tiles if the save predates
     // sections, so an upgrade re-lays the ring where it actually stands.
     if (S.walls.size) {
@@ -91,15 +99,13 @@ export function wallBlocked(tx, ty) {
   return false;
 }
 
-// layWallSegment adds every tile on the straight line from `from` to `to`
-// (inclusive) to S.walls, carving a gate at `gate` if given (that one tile
-// becomes passable + drawn as an opening instead of fence). Only ever lays
-// straight (axis-aligned) runs — a diagonal from an LLM-authored order is
-// snapped to its dominant axis so the tile-by-tile walk below terminates.
-// Skips any tile wallBlocked flags (a building, farm field, ore/stone vein, or
-// water) — the fence meets that obstacle and resumes past it instead of cutting
-// through its sprite, so a segment builds AROUND the town's fixed features.
-export function layWallSegment(from, to, gate, kind = 'fence') {
+// segmentTiles — the tiles a straight run from `from` to `to` (inclusive)
+// would cover, with `gate:true` on the gate tile. Only ever axis-aligned —
+// a diagonal from an LLM-authored order is snapped to its dominant axis so
+// the walk terminates. Skips any tile wallBlocked flags (a building, farm
+// field, ore/stone vein, or water) — the wall meets that obstacle and
+// resumes past it instead of cutting through its sprite.
+export function segmentTiles(from, to, gate) {
   from = { x: clampX(from.x), y: clampY(from.y) };
   to = { x: clampX(to.x), y: clampY(to.y) };
   if (from.x !== to.x && from.y !== to.y) {
@@ -107,19 +113,66 @@ export function layWallSegment(from, to, gate, kind = 'fence') {
   }
   const dx = Math.sign(to.x - from.x), dy = Math.sign(to.y - from.y);
   const g = gate ? { x: clampX(gate.x), y: clampY(gate.y) } : null;
+  const tiles = [];
   let x = from.x, y = from.y, guard = 0;
   while (guard++ <= TOWN_W + TOWN_H) {
-    const k = wallKey(x, y);
-    // A farm / vein / boulder / shore / building on the line stays untouched —
-    // the fence builds AROUND it (that tile is left open, a natural gap where
-    // the obstacle is) instead of drawing straight through it.
-    if (wallBlocked(x, y)) { /* skip — build around it */ }
-    else if (g && g.x === x && g.y === y) { S.walls.delete(k); S.gates.add(k); S.wallKind.delete(k); }
-    else { S.gates.delete(k); S.walls.add(k); S.wallKind.set(k, kind); } // fence | wood | stone — sets the tile's fortification tier
+    if (!wallBlocked(x, y)) tiles.push({ x, y, gate: !!(g && g.x === x && g.y === y) });
     if (x === to.x && y === to.y) break;
     x += dx; y += dy;
   }
+  return tiles;
+}
+
+// layWallSegment lays a whole run INSTANTLY — the pre-masonry path, kept for
+// offline healing / migrations. Live construction goes through the plan
+// (enqueueWallJobs → stepMasonry → applyWallJob), one tile at a time.
+export function layWallSegment(from, to, gate, kind = 'fence') {
+  for (const t of segmentTiles(from, to, gate)) applyWallJob({ ...t, kind }, true);
   S.wallsVersion++; saveWalls();
+}
+
+// ---- the structure plan (masonry) ---------------------------------------
+// Walls are no longer conjured a side at a time: an order PLANS tile jobs
+// (paying up front), and masons raise them ONE TILE AT A TIME through a real
+// 1-tile construction site builders must walk to and work (see stepMasonry/
+// startWallSite in buildings.js). The plan is generic tile-work — walls,
+// gates, towers today; the same queue can carry future structures.
+
+// applyWallJob lands one finished job's tile in the real sets. `quiet` skips
+// the version-bump/save (batch callers do it once).
+export function applyWallJob(job, quiet) {
+  const k = wallKey(job.x, job.y);
+  if (job.tower) S.towers.add(k);
+  if (job.gate) { S.walls.delete(k); S.gates.add(k); S.wallKind.delete(k); }
+  else { S.gates.delete(k); S.walls.add(k); S.wallKind.set(k, job.kind || 'fence'); }
+  if (!quiet) { S.wallsVersion++; saveWalls(); }
+}
+
+// enqueueWallJobs appends jobs to the plan, dropping ones already satisfied
+// (a tile that's already this kind of wall / already a gate) — so re-planning
+// after a partial build only queues what's genuinely left. Returns the count
+// actually queued.
+export function enqueueWallJobs(jobs) {
+  let n = 0;
+  for (const j of jobs) {
+    const k = wallKey(j.x, j.y);
+    const satisfied = j.gate ? S.gates.has(k)
+      : (S.walls.has(k) && (S.wallKind.get(k) || 'fence') === (j.kind || 'fence') && (!j.tower || S.towers.has(k)));
+    if (satisfied) continue;
+    if (S.wallPlan.some((p) => p.x === j.x && p.y === j.y)) continue; // already planned
+    S.wallPlan.push(j); n++;
+  }
+  if (n) { S.wallsVersion++; saveWalls(); }
+  return n;
+}
+
+// wallJobsLeft — how many of an order's jobs (by tag) are still unbuilt:
+// queued in the plan, or under the mason's hands right now.
+export function wallJobsLeft(tag) {
+  let n = 0;
+  for (const j of S.wallPlan) if (j.tag === tag) n++;
+  for (const s of S.sites) if (s.type === 'wall' && !s.done && s.job.tag === tag) n++;
+  return n;
 }
 
 // layGate carves (or moves) a single gate tile on its own — used both by
@@ -251,6 +304,16 @@ export function renderWalls() {
     const [tx, ty] = key.split(',').map(Number);
     add(S.atlas.fence.post, tx, ty, 0, 0xf2c14e);
   }
+  // The PLAN made visible — faint survey stakes where walls are yet to rise,
+  // so a ring reads as intent long before the masons get there.
+  for (const j of S.wallPlan) {
+    const s = new Sprite(S.atlas.fence.post); s.anchor.set(0.5, 0.5);
+    s.x = j.x * TILE + TILE / 2; s.y = j.y * TILE + TILE / 2;
+    s.alpha = 0.22; if (!j.gate && WALL_TINT[j.kind]) s.tint = WALL_TINT[j.kind];
+    if (j.gate) s.tint = 0xf2c14e;
+    s.zIndex = (j.y + 1) * TILE;
+    S.entities.addChild(s); S.wallSprites.push(s);
+  }
   // Watchtowers — whole-image sprites, base-anchored so they y-sort with folk.
   for (const s of S.towerSprites) { S.entities.removeChild(s); s.destroy(); }
   S.towerSprites = [];
@@ -265,4 +328,4 @@ export function renderWalls() {
 }
 
 // wood = timber-brown, stone = grey; fence stays the atlas's natural colour.
-const WALL_TINT = { wood: 0x9c6b3a, stone: 0x9aa0a8 };
+export const WALL_TINT = { wood: 0x9c6b3a, stone: 0x9aa0a8 };

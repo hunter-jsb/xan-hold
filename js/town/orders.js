@@ -5,7 +5,7 @@ import { S, isRaided } from './state.js';
 import { ORDER, WORK_S, MAX_ACTIVE, MAX_PER_TYPE, FOCUS, TRADE_ACT, CENTER_TX, CENTER_TY, PLOT, TOWN_W, TOWN_H } from './constants.js';
 import { startSite, startFarmSite, nextFarmPlot, wantsNewFarmField, farmFieldAvailable, mineNodeAvailable, coreRadius, plotInCore, CORE_TYPES, recipeFor, pickRelocateDest, relocateBuilding } from './buildings.js';
 import { wharfSiteAvailable } from './terrain.js';
-import { layWallSegment, layGate, placeTower, TIER_KIND } from './walls.js';
+import { segmentTiles, enqueueWallJobs, wallJobsLeft, TIER_KIND } from './walls.js';
 
 const { BUILDINGS, BY_ID } = window.XANGAME;
 
@@ -119,6 +119,15 @@ export function advanceOrder(a, dt) {
   // builders must reach and till it before the field appears. Only `expand`
   // stays instant for now.
   if (a.type === ORDER.BUILD) { advanceBuildOrder(a, dt); return; }
+  // A PLANNED wall order mirrors the masons' real pace — its jobs sit in the
+  // plan and rise one tile at a time (stepMasonry); the order finishes only
+  // when its last tile stands.
+  if (a.type === ORDER.WALL && a.planned) {
+    const left = wallJobsLeft(a.wallTag);
+    a.progress = a.total ? 1 - left / a.total : 1;
+    if (!left) { a.qtyLeft = 0; a.status = 'done'; a.doneAt = Date.now(); a.progress = 1; }
+    return;
+  }
   a.progress += dt / (WORK_S[a.type] || 3);
   if (a.progress < 1) return;
   if (a.type === ORDER.FOCUS) { S.focus = a.value || a.target || null; a.qtyLeft = 0; }
@@ -148,12 +157,16 @@ export function advanceOrder(a, dt) {
       return;
     }
   } else if (a.type === ORDER.WALL) {
-    // Walls cost + raise defense via the palisade level (game.js unchanged); the
-    // RESULT is real tiles. A wall order either UPGRADES a section's ring a tier,
-    // or lays the next planned segment/gate at the section's current tier kind.
+    // Walls cost + raise defense via the palisade level (game.js unchanged), but
+    // the RESULT is a PLAN, not tiles: the order pays once and queues tile jobs
+    // the masons then raise one at a time (see the `a.planned` mirror above).
+    const tag = () => (S.wallTagSeq = (S.wallTagSeq || 0) + 1);
     if (a.upgrade) {
-      if (S.game.build('palisade')) { upgradeSectionWall(a.section || 'core'); a.qtyLeft = 0; }
-      else { autoFund('palisade'); a.progress = 1; a.waited += dt; if (a.waited > 16) { a.status = 'skipped'; a.doneAt = Date.now(); } return; }
+      if (S.game.build('palisade')) {
+        const plan = planRingUpgrade(a.section || 'core', tag());
+        if (plan) { a.wallTag = plan.tag; a.total = plan.count; a.planned = true; }
+        else a.qtyLeft = 0;                 // unwalled or already stone — nothing to re-clad
+      } else { autoFund('palisade'); a.progress = 1; a.waited += dt; if (a.waited > 16) { a.status = 'skipped'; a.doneAt = Date.now(); } return; }
     } else {
       if (!((a.from && a.to) || a.gate)) {  // no geometry (e.g. the Will's `build palisade`) — plan the core's next side
         const seg = planDefensiveSegment();
@@ -163,9 +176,12 @@ export function advanceOrder(a, dt) {
         S.game.build('palisade'); a.qtyLeft = 0;
       } else if (S.game.build('palisade')) {
         const kind = TIER_KIND[S.sectionTier[a.section || 'core'] || 1];
-        if (a.from && a.to) layWallSegment(a.from, a.to, a.gate, kind);
-        else if (a.gate) layGate(a.gate);
-        a.qtyLeft -= 1; a.waited = 0;
+        const t = tag();
+        const tiles = (a.from && a.to) ? segmentTiles(a.from, a.to, a.gate)
+          : [{ x: a.gate.x, y: a.gate.y, gate: true }];
+        const count = enqueueWallJobs(tiles.map((p) => ({ ...p, kind, tag: t })));
+        if (count) { a.wallTag = t; a.total = count; a.planned = true; }
+        else { a.qtyLeft -= 1; a.waited = 0; }  // every tile already stood — nothing to queue
       } else {
         autoFund('palisade'); a.progress = 1; a.waited += dt;
         if (a.waited > 16) { a.status = 'skipped'; a.doneAt = Date.now(); }
@@ -249,7 +265,7 @@ export function sectionBounds(section) {
   if (section === 'core') {
     if (!S.usedPlots.size) return null;
     const rad = coreRadius() * PLOT + 2;               // core zone + clearance past its buildings
-    return box(CENTER_TX - rad, CENTER_TY - rad, CENTER_TX + rad, CENTER_TY + rad);
+    return shedFarms(box(CENTER_TX - rad, CENTER_TY - rad, CENTER_TX + rad, CENTER_TY + rad));
   }
   if (section === 'farmland') {
     if (!S.farmTiles.size) return null;
@@ -264,6 +280,40 @@ export function sectionBounds(section) {
     return box(x0 - 2, y0 - 2, x1 + 2, y1 + 2);
   }
   return null;
+}
+
+// shedFarms — pull the core box in past any farm tiles it would swallow.
+// Walls are dear and walled ground is scarce: fields live OUTSIDE the ring
+// (penning farmland is its own deliberate section), so a core wall should
+// never wander through the fields leaving gap-toothed runs where wallBlocked
+// skipped tiles. Tries each single-side shrink that clears every in-box farm
+// tile (fields cluster on one side of the core, so one side nearly always
+// suffices), keeps the one preserving the most area, and never pulls a side
+// past the town's own buildings. Falls back to the original box if nothing
+// feasible (fields on opposite flanks) — wallBlocked still gaps around them.
+function shedFarms(b) {
+  if (!S.farmTiles.size) return b;
+  const inside = [];
+  for (const k of S.farmTiles.keys()) {
+    const [tx, ty] = k.split(',').map(Number);
+    if (tx >= b.x0 && tx <= b.x1 && ty >= b.y0 && ty <= b.y1) inside.push({ tx, ty });
+  }
+  if (!inside.length) return b;
+  // The ring must still clear the buildings themselves (walls one tile out).
+  let bx0 = CENTER_TX, by0 = CENTER_TY, bx1 = CENTER_TX, by1 = CENTER_TY;
+  for (const h of S.hittable) {
+    if (h.type === 'farm') continue;
+    bx0 = Math.min(bx0, h.x0 - 1); by0 = Math.min(by0, h.y0 - 1);
+    bx1 = Math.max(bx1, h.x1); by1 = Math.max(by1, h.y1);
+  }
+  const area = (x) => (x.x1 - x.x0) * (x.y1 - x.y0);
+  let best = null;
+  const tryBox = (nb) => { if (nb.x0 <= bx0 && nb.y0 <= by0 && nb.x1 >= bx1 && nb.y1 >= by1 && (!best || area(nb) > area(best))) best = nb; };
+  tryBox({ ...b, x0: Math.max(...inside.map((f) => f.tx)) + 1 });   // shed west-side fields
+  tryBox({ ...b, x1: Math.min(...inside.map((f) => f.tx)) - 1 });   // east
+  tryBox({ ...b, y0: Math.max(...inside.map((f) => f.ty)) + 1 });   // north
+  tryBox({ ...b, y1: Math.min(...inside.map((f) => f.ty)) - 1 });   // south
+  return best || b;
 }
 
 // sectionSides — the four wall runs (from/to + a mid gate) around a box.
@@ -305,19 +355,32 @@ export function planDefensiveSegment() {
   return planSectionWall('core');
 }
 
-// upgradeSectionWall raises a walled section a tier (fence→wood→stone), re-laying
-// its ring at the sturdier kind with a tower at each corner (so each side becomes
-// a fort span → troop capacity). False if the section is unwalled or already stone.
-export function upgradeSectionWall(section) {
+// planRingUpgrade queues a walled section's next tier (fence→wood→stone) as
+// PLAN JOBS — the masons re-clad the ring tile by tile, corners becoming
+// towers, instead of the whole perimeter + four towers appearing in one tick
+// (each finished side becomes a fort span → troop capacity). Null if the
+// section is unwalled or already stone. The tier bumps at plan time so any
+// further segments lay the new kind.
+export function planRingUpgrade(section, tag) {
   const tier = S.sectionTier[section] || 0;
-  if (tier < 1 || tier >= 3) return false;
+  if (tier < 1 || tier >= 3) return null;
   const b = S.sectionBox[section] || sectionBounds(section);
-  if (!b) return false;
+  if (!b) return null;
   const kind = TIER_KIND[tier + 1];
-  placeTower(b.x0, b.y0); placeTower(b.x1, b.y0); placeTower(b.x0, b.y1); placeTower(b.x1, b.y1);
-  for (const seg of Object.values(sectionSides(b))) layWallSegment(seg.from, seg.to, seg.gate, kind);
+  const jobs = new Map();   // by "x,y" — corners appear in two sides' runs
+  for (const seg of Object.values(sectionSides(b))) {
+    for (const t of segmentTiles(seg.from, seg.to, seg.gate)) {
+      const k = `${t.x},${t.y}`;
+      if (!jobs.has(k) || t.gate) jobs.set(k, { x: t.x, y: t.y, gate: t.gate, kind, tag });
+    }
+  }
+  for (const [cx, cy] of [[b.x0, b.y0], [b.x1, b.y0], [b.x0, b.y1], [b.x1, b.y1]]) {
+    const j = jobs.get(`${cx},${cy}`);
+    if (j && !j.gate) { j.tower = true; }   // a corner the ring actually reaches becomes a watchtower
+  }
+  const count = enqueueWallJobs([...jobs.values()]);
   S.sectionTier[section] = tier + 1;
-  return true;
+  return count ? { tag, count } : null;
 }
 
 // localSteward: the town's own hands. When no orders are queued it picks a
