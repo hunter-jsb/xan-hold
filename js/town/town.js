@@ -18,6 +18,7 @@ import { initHUD, updateHUD, renderOrders, pushChronicle, renderArchiveDetail } 
 import { executeOrders, localSteward } from './orders.js';
 import { callWill, initStewardAsk, showStewardAsk } from './will.js';
 import { spawnRaidWave, stepRaid } from './raids.js';
+import { initAnimals, stepAnimals } from './animals.js';
 
 const { allHolds } = window.XAN;
 const { Game, BY_ID, CFG } = window.XANGAME;
@@ -110,6 +111,7 @@ async function boot() {
   S.alarmFx = makeOverlay(0xff2a1a); S.alarmFx.alpha = 0;
   S.app.stage.addChild(S.seasonFx, S.night, S.alarmFx);
   initWeather();   // seasonal snow/leaves/petals over the scene
+  initAnimals();   // the land's wild residents, and the door for wanderers
 
   layoutWorld();
   window.addEventListener('resize', layoutWorld);
@@ -332,6 +334,7 @@ function onFrame(ticker) {
   stepRaid(dt);   // advance any live raid wave (move raiders, resolve the clash)
   stepWeather(dt); // drift the seasonal snow/leaves/petals
   stepCaravan(dt); // trundle any trade caravans between market + edge
+  stepAnimals(dt); // the wild things amble, settle, move on
   stepFx(dt);      // advance the whole particle pool (bursts/emotes/poofs/pulses)
   drawFealty();    // the faint parish threads from folk to their speaker
   // hover highlight rings: perma (v.home) vs temp (v.haulTarget) assignees of
@@ -645,7 +648,7 @@ function townTick() {
 // dumpState POSTs a FULL live diagnostic snapshot to the local server
 // (→ debug-dump.json) so state can be inspected without a GPU. Runs on a timer
 // (boot) so the file is always fresh; 'i' forces one now. (temporary)
-const BUILD_TAG = 'mason-1'; // bumped on meaningful ships — the dump carries it so a stale tab is detectable
+const BUILD_TAG = 'fauna-1'; // bumped on meaningful ships — the dump carries it so a stale tab is detectable
 function dumpState() {
   const g = S.game, B = window.XANGAME.BUILDINGS;
   const R = (o) => Object.fromEntries(Object.entries(o).map(([k, v]) => [k, Math.round(v)]));
@@ -682,6 +685,7 @@ function dumpState() {
       villagers: S.villagers.length, wallSprites: (S.wallSprites || []).length, towerSprites: (S.towerSprites || []).length,
       woodNodes: (S.woodNodes || []).length, oreNodes: (S.oreNodes || []).length,
       farmTiles: S.farmTiles.size, sites: S.sites.length, raiders: (S.raiders || []).length,
+      animals: (S.animals || []).map((a) => `${a.kind}:${a.state}`),
       scale: S.scale,
     },
   };

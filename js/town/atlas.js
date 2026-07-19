@@ -179,6 +179,17 @@ export async function loadAtlas() {
     farmDirt[`in:${k}`] = new Texture({ source: innerSheet.source, frame: new Rectangle(i * TILE, 0, TILE, TILE) });
   });
 
+  // Wild + farm animals (Tiny Creatures / Tiny Farm, CC0 — see assets/CREDITS.md).
+  // Single static pose each, drawn FACING RIGHT — flip scale.x for left.
+  const ANIMAL_FILES = ['sheep', 'goat', 'chicken', 'cow', 'deer', 'fawn', 'rabbit',
+    'boar', 'bear', 'bear_black', 'bear_polar', 'snake', 'snake_tan', 'raccoon'];
+  const animals = {};
+  for (const name of ANIMAL_FILES) {
+    const t = await Assets.load(`/assets/animals/${name}.png`);
+    t.source.scaleMode = 'nearest';
+    animals[name] = t;
+  }
+
   // Water (ArMM overworld, CC0) — a calm ripple fill for lakes/coast, a
   // diagonal-streak flow fill for rivers, and one foam shore-edge tile.
   // town.js rotates that one edge tile per side (N/S/E/W) instead of needing
@@ -189,5 +200,5 @@ export async function loadAtlas() {
     edge: armmTile(19, 8),
   };
 
-  return { tex, ground, trees: TREES, clusters: CLUSTERS, clutter, fence, walk, oreTex, oreTexByKind, boulderTex, images, crops, farmDirt, cropOrder: ['greens', 'grain', 'roots'], anims: { barracks: barracksFrames }, RECIPES, PROP, HOUSE_OF, water };
+  return { tex, ground, trees: TREES, clusters: CLUSTERS, clutter, fence, walk, oreTex, oreTexByKind, boulderTex, images, crops, farmDirt, cropOrder: ['greens', 'grain', 'roots'], anims: { barracks: barracksFrames }, RECIPES, PROP, HOUSE_OF, water, animals };
 }
