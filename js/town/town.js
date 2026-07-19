@@ -150,8 +150,9 @@ function pickHold() {
 // the land + a roll, so each fresh settlement opens toward a different aim
 // (food/defense/growth/trade/industry) instead of the same deterministic build.
 function pickFoundingFocus(h) {
-  const r = h.rich || {}, w = { growth: 1, food: 1, trade: 1, industry: 1, defense: 1 };
-  if ((h.danger || 0) > 0.4) w.defense += 2;
+  // defense scales with the land's danger: a danger-0 seat is never called to
+  // arms, a frontier march (0.8) hears it as loudly as the old flat+bump did.
+  const r = h.rich || {}, w = { growth: 1, food: 1, trade: 1, industry: 1, defense: 3 * (h.danger || 0) };
   if ((r.food || 0) < 0.25) w.food += 1.5;
   if ((r.coin || 0) > 0.5) w.trade += 1.5;
   if ((r.ore || 0) + (r.stone || 0) > 0.6) w.industry += 1.5;
